@@ -70,10 +70,43 @@
         <label>星陨层数
           <input id="starfall" type="number" min="0" max="99" step="1" value="0">
         </label>
+        <label>连击次数
+          <input id="hits" type="number" min="1" max="99" step="1" value="1">
+        </label>
       </div>
       <p id="skill-info" class="note"></p>
       <div id="damage-result"></div>
       <p id="status" class="status"></p>
+    </section>
+
+    <section class="card">
+      <h2>战斗记录 <span class="hint">按填写顺序缩小对方范围</span></h2>
+      <div class="record-form">
+        <label>类型
+          <select id="record-type">
+            <option value="damage">伤害</option>
+            <option value="hp_percent">生命百分比</option>
+          </select>
+        </label>
+        <label id="record-damage-field">伤害
+          <input id="record-damage" type="number" min="0" step="1" placeholder="例如 341">
+        </label>
+        <label id="record-percent-field" hidden>剩余生命 %
+          <input id="record-percent" type="number" min="0" max="100" step="1" placeholder="例如 50">
+        </label>
+        <label id="record-total-field" hidden>累计伤害
+          <input id="record-total" type="number" min="0" step="1" placeholder="例如 195">
+        </label>
+        <button id="add-record" type="button">添加记录</button>
+      </div>
+      <p class="note">
+        伤害填这一轮总共打掉的血量（连击按总数）；记录会记住添加时的技能、天气、
+        增减益、星陨层数和连击。生命百分比记录使用“到那一刻为止的累计伤害”，
+        自动填写后可以手动改。
+      </p>
+      <p id="record-status" class="status"></p>
+      <ol id="record-list" class="record-list"></ol>
+      <div id="record-warnings" class="warnings" hidden></div>
     </section>
   </main>
 

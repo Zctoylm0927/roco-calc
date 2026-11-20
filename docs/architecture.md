@@ -516,6 +516,8 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 
 `POST /api/analyze` 的响应除了 `opponent`（对方范围）和 `damage`（伤害范围），还包含 `our`：我方六维、性格、天分、增减益和增减益后速度，供页面左栏直接显示，不用在浏览器里重算公式。
 
+网页把战斗记录放在 `observations` 里一起发给接口：伤害记录带 `damage`、`skill`、`hits`、`weather`、双方 `buffs`、`starfall_layers`，生命百分比记录带 `hp_percent` 和 `total_damage`。每条记录保存添加时的状态，之后改当前天气或增减益不会改变历史记录。整页状态（含记录）保存在浏览器 `localStorage` 的 `roco-calc-state-v1`，刷新后恢复，再重新请求一次计算。
+
 ## 代码结构
 
 | 文件 | 作用 |
@@ -529,8 +531,8 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `calc.py` | 伤害命令行入口（中文输出，支持 `--json`） |
 | `analyze.py` | 范围推断命令行演示 |
 | `server.py` | 本地网页服务：JSON 接口 + 静态页面 |
-| `web/index.html` | 网页结构（当前为最小页面） |
-| `web/app.js` | 网页交互 |
+| `web/index.html` | 网页结构：左右两栏、技能状态、战斗记录 |
+| `web/app.js` | 网页交互：自动重算、记录增删改、本地保存 |
 | `web/style.css` | 网页样式 |
 | `tests/test_roco_calc.py` | 面板/伤害/增减益/星陨的单元测试 |
 | `tests/test_roco_analysis.py` | 范围推断的单元测试 |
