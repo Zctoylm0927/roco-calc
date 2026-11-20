@@ -75,6 +75,22 @@ class TalentError(RocoCalcError):
     """天分数值不合法。"""
 
 
+class SkillNotFoundError(RocoCalcError):
+    """找不到技能。"""
+
+
+class AmbiguousSkillError(RocoCalcError):
+    """同名技能有多个，无法确定用哪一个。"""
+
+
+class NotDamageSkillError(RocoCalcError):
+    """该技能不造成直接伤害，无法套用伤害公式。"""
+
+
+class DamageInputError(RocoCalcError):
+    """伤害计算的参数不合法。"""
+
+
 def _read_csv(filename):
     path = DATA_DIR / filename
     if not path.exists():
@@ -120,6 +136,244 @@ def load_natures():
             "down_name": row["down_name"],
         }
     return natures
+
+
+@lru_cache(maxsize=None)
+def load_skills():
+    """读取 data/skills.csv，返回 {技能名: [技能字典, ...]}。
+
+    同名技能只出现在「特性」类里；攻击技能名唯一。保留列表是为了让
+    find_skill 在遇到重名时能给出明确错误。
+    """
+    rows = _read_csv("skills.csv")
+    skills = {}
+    for row in rows:
+        power = row.get("power", "")
+        energy = row.get("energy", "")
+        skill = {
+            "skill_id": row.get("skill_id", ""),
+            "game_id": int(row["game_id"]) if row.get("game_id", "").isdigit() else row.get("game_id", ""),
+            "name": row.get("name", ""),
+            "category": row.get("category", ""),
+            "element": row.get("element", ""),
+            "damage_class": row.get("damage_class", ""),
+            "power": int(power) if power.isdigit() else None,
+            "energy": int(energy) if energy.isdigit() else None,
+            "power_text": row.get("power_text", ""),
+            "desc": row.get("desc", ""),
+        }
+        skills.setdefault(skill["name"], []).append(skill)
+    return skills
+
+
+@lru_cache(maxsize=None)
+def load_type_multipliers():
+    """读取 data/type_multipliers.csv，返回 {(防御方组合, 攻击属性): 倍率}。"""
+    rows = _read_csv("type_multipliers.csv")
+    table = {}
+    for row in rows:
+        table[(row["defend"], row["attack"])] = float(row["multiplier"])
+    return table
+
+
+def find_skill(name):
+    """按名称查技能。攻击技能名唯一；重名时优先取唯一的攻击技能。"""
+    matches = load_skills().get(str(name).strip(), [])
+    if not matches:
+        raise SkillNotFoundError(f"找不到技能“{name}”。")
+    if len(matches) == 1:
+        return matches[0]
+
+    attacks = [skill for skill in matches if skill["category"] == "攻击"]
+    if len(attacks) == 1:
+        return attacks[0]
+    raise AmbiguousSkillError(f"技能“{name}”有多个同名条目，无法确定用哪一个。")
+
+
+def type_multiplier(attack_element, defender_types):
+    """查属性克制倍率；表中没有的组合按 ×1 处理。"""
+    if not defender_types:
+        return 1.0
+    if attack_element in ("", "无系别"):
+        return 1.0
+    if attack_element not in TYPE_SET:
+        raise RocoCalcError(f"未知攻击属性“{attack_element}”。")
+    for element in defender_types:
+        if element not in TYPE_SET:
+            raise RocoCalcError(f"未知防御属性“{element}”。")
+
+    # 双属性组合的键名顺序由 crawl_type_chart.py 决定，这里按同一顺序规范化。
+    defend_key = "|".join(sorted(defender_types, key=TYPE_ORDER.index))
+    return load_type_multipliers().get((defend_key, attack_element), 1.0)
+
+
+def _ability_multiplier(attack_modifier_percent, defense_modifier_percent):
+    """攻防等级百分比 → 显示威力乘区。
+
+    增攻/减防提高伤害，减攻/增防降低伤害；默认都为 0，乘区为 1。
+    """
+    attack_mod = float(attack_modifier_percent)
+    defense_mod = float(defense_modifier_percent)
+    numerator = 1 + max(attack_mod, 0) / 100 + max(-defense_mod, 0) / 100
+    denominator = 1 + max(-attack_mod, 0) / 100 + max(defense_mod, 0) / 100
+    if denominator <= 0:
+        raise DamageInputError("攻防等级组合不合法，导致除零。")
+    return numerator / denominator
+
+
+def calculate_damage(
+    attacker,
+    defender,
+    skill,
+    *,
+    power=None,
+    power_bonus=0,
+    power_percent=0,
+    damage_only_power_bonus=0,
+    damage_only_power_percent=0,
+    attack_modifier_percent=0,
+    defense_modifier_percent=0,
+    damage_reduction_percent=0,
+    damage_multiplier_percent=100,
+    hit_count=1,
+    misc_multiplier=1.0,
+    ignore_type_resistance=False,
+):
+    """计算一次技能的伤害。
+
+    attacker / defender 是 build_panel() 的返回值（含 pet、stats、level）。
+    skill 是 find_skill() 返回的攻击技能。
+
+    计算顺序（与 tzrain 参考实现一致）:
+        有效威力 = (基础威力 + 固定加成) × (1 + 威力百分比)
+        显示威力 = round(有效威力 × 本系 × 克制 × 其他乘区 × 攻防等级)
+        单次伤害 = floor(round(攻击 × 显示威力 × 减伤 × 等级系数) / 防御)
+        总伤害   = floor(单次伤害 × 连击 × 最终乘区)
+    """
+    if skill.get("category") != "攻击":
+        raise NotDamageSkillError(
+            f"技能“{skill.get('name', '')}”是{skill.get('category', '非攻击')}技能，不造成直接伤害。"
+        )
+    if skill.get("damage_class") not in ("物攻", "魔攻"):
+        raise NotDamageSkillError(
+            f"技能“{skill.get('name', '')}”没有物攻/魔攻类型，无法计算伤害。"
+        )
+    if isinstance(hit_count, bool) or not isinstance(hit_count, int) or hit_count < 1:
+        raise DamageInputError("连击次数必须是大于等于 1 的整数。")
+
+    if skill["damage_class"] == "物攻":
+        attack_key, defense_key = "atk", "def"
+    else:
+        attack_key, defense_key = "spa", "spd"
+
+    attacker_stat = attacker["stats"][attack_key]
+    defender_defense = defender["stats"][defense_key]
+    defender_hp = defender["stats"]["hp"]
+    level = _normalize_level(attacker["level"])
+
+    if power is None and skill.get("power") is None:
+        raise NotDamageSkillError(
+            f"技能“{skill.get('name', '')}”没有基础威力，请用 power 参数手动指定。"
+        )
+    base_power = float(skill["power"] if power is None else power)
+    effective_power = max(
+        0.0, (base_power + power_bonus) * (1 + power_percent / 100)
+    )
+    damage_power = max(
+        0.0,
+        (effective_power + damage_only_power_bonus)
+        * (1 + damage_only_power_percent / 100),
+    )
+
+    stab = 1.25 if skill["element"] in attacker["pet"]["types"] else 1.0
+    type_mult = type_multiplier(skill["element"], defender["pet"]["types"])
+    if ignore_type_resistance:
+        type_mult = max(1.0, type_mult)
+    ability_mult = _ability_multiplier(
+        attack_modifier_percent, defense_modifier_percent
+    )
+    reduction_mult = max(0.0, 1 - damage_reduction_percent / 100)
+    final_mult = min(max(float(damage_multiplier_percent), 0), 500) / 100
+
+    display_power = js_round(
+        damage_power * stab * type_mult * float(misc_multiplier) * ability_mult
+    )
+
+    level_coefficient = (45 * level / 100 + 10) / 41
+    if attacker_stat <= 0 or display_power <= 0 or defender_defense <= 0:
+        per_hit = 0
+    else:
+        per_hit = math.floor(
+            js_round(
+                attacker_stat
+                * display_power
+                * reduction_mult
+                * level_coefficient
+            )
+            / defender_defense
+        )
+
+    damage = math.floor(per_hit * hit_count * final_mult)
+    damage_percent = damage / defender_hp * 100 if defender_hp > 0 else 0.0
+
+    return {
+        "attacker": attacker,
+        "defender": defender,
+        "skill": skill,
+        "level": level,
+        "attack_key": attack_key,
+        "defense_key": defense_key,
+        "attacker_stat": attacker_stat,
+        "defender_defense": defender_defense,
+        "defender_hp": defender_hp,
+        "base_power": base_power,
+        "effective_power": effective_power,
+        "display_power": display_power,
+        "stab": stab,
+        "type_multiplier": type_mult,
+        "ability_multiplier": ability_mult,
+        "damage_reduction_multiplier": reduction_mult,
+        "damage_multiplier": final_mult,
+        "hit_count": hit_count,
+        "level_coefficient": level_coefficient,
+        "damage_per_hit": per_hit,
+        "damage": damage,
+        "damage_percent": damage_percent,
+        "is_knockout": damage >= defender_hp,
+    }
+
+
+def calculate_matchup(
+    attacker_name,
+    defender_name,
+    skill_name,
+    *,
+    attacker_form=None,
+    defender_form=None,
+    attacker_nature=None,
+    defender_nature=None,
+    attacker_talents=None,
+    defender_talents=None,
+    level=60,
+    **damage_options,
+):
+    """高层入口：按名称查找双方和技能，算面板后计算伤害。"""
+    attacker = build_panel(
+        attacker_name,
+        form=attacker_form,
+        nature=attacker_nature,
+        talents=attacker_talents,
+        level=level,
+    )
+    defender = build_panel(
+        defender_name,
+        form=defender_form,
+        nature=defender_nature,
+        talents=defender_talents,
+        level=level,
+    )
+    skill = find_skill(skill_name)
+    return calculate_damage(attacker, defender, skill, **damage_options)
 
 
 def _split_name_form(text, form=None):
