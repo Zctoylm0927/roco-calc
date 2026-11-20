@@ -555,6 +555,114 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 
 网页把战斗记录放在 `observations` 里一起发给接口：伤害记录带 `damage`、`skill`、`hits`、`weather`、双方 `buffs`、`starfall_layers`，生命百分比记录带 `hp_percent` 和 `total_damage`。每条记录保存添加时的状态，之后改当前天气或增减益不会改变历史记录。整页状态（含记录）保存在浏览器 `localStorage` 的 `roco-calc-state-v1`，刷新后恢复，再重新请求一次计算。
 
+## 6 对 6 队伍推断（第十五步）
+
+新增 `roco_team.py`，和单只精灵的 `roco_analysis.analyze_battle` 并存；旧的命令行、网页接口和测试都不改。队伍版的目标是：双方各 6 个位置，我方全部已知，对方每只精灵分别推断可能的性格、天分和当前生命。
+
+### 输入
+
+```json
+{
+  "level": 60,
+  "weather": null,
+  "hp_percent_rounding": "round",
+  "our_team": [
+    {
+      "pet": "水灵",
+      "nature": "聪明",
+      "talents": {"spa": 10},
+      "skills": ["气泡", "水炮", "天洪", "水弹枪"],
+      "current_hp": 306,
+      "buffs": {},
+      "starfall_layers": 0
+    }
+  ],
+  "opponent_team": [
+    {
+      "pet": "龙息帕尔",
+      "skills": ["龙之利爪", "升龙咆哮"],
+      "buffs": {},
+      "starfall_layers": 0
+    }
+  ],
+  "active_our_slot": 0,
+  "active_opponent_slot": 0,
+  "records": []
+}
+```
+
+- 队伍列表最多 6 项，不足 6 项时输出里会补成 6 个位置；没有 `pet` 的位置视为空位。
+- 我方每个位置最多 4 个技能；对方技能数量不限。
+- 我方 `current_hp` 是具体数字，不填则默认满血；对方没有这个字段，默认满血，要从战斗中途开始记录就先加一条生命变化记录。
+- 技能可以写成名称，也可以写成 `{"name": "魔能爆", "power": 120}` 来临时指定威力，或加 `"hits"` 指定连击。
+
+### 两种记录
+
+伤害记录：
+
+```json
+{
+  "type": "damage",
+  "attacker_side": "our",
+  "attacker_slot": 0,
+  "defender_side": "theirs",
+  "defender_slot": 0,
+  "skill": "气泡",
+  "damage": 195,
+  "hp_percent": 50
+}
+```
+
+- `attacker_side` / `defender_side` 取 `our` 或 `theirs`，两边必须是不同阵营。
+- 受击方是对方时，可以加 `hp_percent`，表示打完后对方血条显示的剩余百分比；它会同时缩小最大生命和当前生命。
+- 受击方是我方时，可以加 `remaining_hp`，表示打完后我方剩余的具体生命值；不接受 `hp_percent`。
+- 记录里的 `weather`、`attacker_buffs`、`defender_buffs`、`starfall_layers` 是可选的“当时状态”快照；不填就沿用当前状态。
+
+生命变化记录：
+
+```json
+{"type": "hp_change", "side": "theirs", "slot": 0,
+ "hp_percent": 80, "hp_delta": 116}
+
+{"type": "hp_change", "side": "our", "slot": 0, "hp": 306}
+```
+
+- 对方：`hp_percent` 必填；`hp_delta` 选填，正数表示回血、负数表示掉血。
+  - 不填 `hp_delta`：只把当前生命重置到显示该百分比的范围，不额外缩小性格/天分。
+  - 填了 `hp_delta`：用「变化前生命 + 变化量 = 变化后生命」再筛选候选，可能锁定最大生命和当前生命。
+- 我方：直接填 `hp` 具体生命值，不接受百分比。
+
+### 推断规则
+
+- 同一只对方精灵的所有记录按输入顺序处理；不同位置完全独立，打位置 1 不会影响位置 2。
+- 伤害记录先按受击方对应的防御（对方防守）或攻击（对方进攻）筛选候选，再扣掉这次伤害。
+- 对方初始满血。攻击记录里的剩余百分比可以用来反推最大生命；生命变化记录用来处理回血、掉血等没有被追踪的变化。
+- 一条记录完全没有候选能对上时，不修改上一步结果，只在 `records[].matched` 标为 `false` 并在 `warnings` 里说明。
+- 我方生命始终是具体数字；对方的当前生命同时给出具体范围和显示百分比范围。
+
+### 输出
+
+`analyze_team(state)` 返回：
+
+- `our_team` / `opponent_team`：固定 6 个位置，未选择的位置 `configured: false`。
+- `opponent_team[i].stats`：六项属性的最小值、最大值和所有可能取值；`builds` 是剩余/总候选数；`natures_remaining` 和 `possible_natures` 是可能性格。
+- `opponent_team[i].current_hp` 是具体生命范围，`current_hp_percent` 是显示百分比范围。
+- `active`：当前对位双方的技能伤害表。
+  - `our_skills[]` 给出伤害范围、对方剩余生命百分比范围、占最大生命百分比和能否击倒。
+  - `opponent_skills[]` 给出伤害范围、我方剩余具体生命范围和能否击倒；不出现我方百分比。
+- `records`：每条记录的处理结果，顺序与输入一致；`warnings`：没有对上或被跳过的说明。
+
+### 实现方式
+
+复用 `roco_analysis.py` 的 46,320 个候选和位图过滤，不另写一套性格/天分公式。每个候选额外保存当前生命的上下界；伤害只按受击方防御或攻击的 15 个不同取值模拟，再映射回候选。这样一条记录仍然只需几次位图运算加一遍 46,320 个候选的遍历。
+
+### 当前限制
+
+- 不支持速度先后、换人、特性、道具、护盾。
+- 一条伤害记录只能涉及一只对方精灵；不支持“对方打对方”。
+- 默认从满血开始；中途开始记录时，要先用生命变化记录设置当前生命。
+- 如果游戏显示的伤害是“最多打到 0 为止”的截断值，而公式伤害超过剩余生命，这条记录可能对不上，需要按实际显示填写并人工判断。
+
 ## 代码结构
 
 | 文件 | 作用 |
@@ -566,8 +674,10 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `crawl_learnsets.py` | 可学习技能表爬取（按精灵展开、合并学习来源） |
 | `roco_calc.py` | 核心库：数据加载、精灵/技能查询、面板值、属性倍率、伤害 |
 | `roco_analysis.py` | 范围推断：对方 46,320 种候选、记录过滤、可能性格 |
+| `roco_team.py` | 6 对 6 队伍推断：每只对方精灵独立候选、双向伤害、两种记录 |
 | `calc.py` | 伤害命令行入口（中文输出，支持 `--json`） |
 | `analyze.py` | 范围推断命令行演示 |
+| `team_demo.py` | 6 对 6 队伍推断的固定例子演示 |
 | `server.py` | 本地网页服务：JSON 接口 + 静态页面 |
 | `web/index.html` | 网页结构：左右两栏、技能状态、战斗记录 |
 | `web/app.js` | 网页交互：自动重算、记录增删改、本地保存 |
@@ -576,6 +686,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `tests/test_roco_analysis.py` | 范围推断的单元测试 |
 | `tests/test_server.py` | 网页接口和静态页面的测试 |
 | `tests/test_learnsets.py` | 学习表解析、匹配和生成数据的测试 |
+| `tests/test_roco_team.py` | 6 对 6 队伍推断的测试 |
 
 数据文件：
 
