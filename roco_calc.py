@@ -36,6 +36,9 @@ STAT_NAMES = {
 }
 NAME_TO_KEY = {name: key for key, name in STAT_NAMES.items()}
 
+# 游戏里天分只可能是这五个值：0 表示没有加成，7/8/9/10 表示有加成。
+TALENT_VALUES = (0, 7, 8, 9, 10)
+
 # 18 种属性。顺序与爬虫 crawl_type_chart.py 一致，用于把双属性组合
 # 规范成 data/type_multipliers.csv 中的键名顺序。
 TYPE_ORDER = (
@@ -640,10 +643,10 @@ def get_nature(nature):
 
 
 def normalize_talents(talents=None):
-    """把天分字典规范成六项齐全的 {键: 0–10} 字典。
+    """把天分字典规范成六项齐全的 {键: 0 或 7～10} 字典。
 
     支持键名（hp/atk/...）或中文名（生命/物攻/...）。
-    游戏规则：至多三项有加成，所以非零项不能超过 3 个。
+    游戏规则：天分只能是 0、7、8、9、10；至多三项有加成。
     """
     result = {key: 0 for key in STAT_KEYS}
     if talents is None:
@@ -655,10 +658,14 @@ def normalize_talents(talents=None):
         key = raw_key if raw_key in STAT_KEYS else NAME_TO_KEY.get(raw_key)
         if key is None:
             raise TalentError(f"未知能力名“{raw_key}”。可用：生命/物攻/物防/魔攻/魔防/速度。")
-        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
-            raise TalentError(f"{STAT_NAMES[key]}的天分必须是 0–10 的整数。")
-        if not 0 <= raw_value <= 10:
-            raise TalentError(f"{STAT_NAMES[key]}的天分必须在 0–10 之间。")
+        if (
+            isinstance(raw_value, bool)
+            or not isinstance(raw_value, int)
+            or raw_value not in TALENT_VALUES
+        ):
+            raise TalentError(
+                f"{STAT_NAMES[key]}的天分必须是 0、7、8、9、10 之一。"
+            )
         result[key] = raw_value
 
     if sum(1 for value in result.values() if value > 0) > 3:
@@ -729,17 +736,19 @@ def calculate_stat(base, talent=0, nature=None, stat="hp", level=60):
     """计算单项面板值。
 
     base   种族值
-    talent 该项天分（0–10）
+    talent 该项天分（0、7、8、9、10）
     nature 性格名、性格字典或 None
     stat   能力键：hp/atk/def/spa/spd/spe
     level  等级，默认 60（PVP 标准）
     """
     if stat not in STAT_KEYS:
         raise RocoCalcError(f"未知能力键“{stat}”。")
-    if isinstance(talent, bool) or not isinstance(talent, int):
-        raise TalentError("天分必须是 0–10 的整数。")
-    if not 0 <= talent <= 10:
-        raise TalentError("天分必须在 0–10 之间。")
+    if (
+        isinstance(talent, bool)
+        or not isinstance(talent, int)
+        or talent not in TALENT_VALUES
+    ):
+        raise TalentError("天分必须是 0、7、8、9、10 之一。")
 
     level = _normalize_level(level)
     nature_obj = get_nature(nature)

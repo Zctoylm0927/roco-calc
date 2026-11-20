@@ -65,9 +65,9 @@ class TestTalents(unittest.TestCase):
         self.assertTrue(all(value == 0 for value in talents.values()))
 
     def test_accepts_chinese_names(self):
-        talents = rc.normalize_talents({"物攻": 10, "速度": 3})
+        talents = rc.normalize_talents({"物攻": 10, "速度": 7})
         self.assertEqual(talents["atk"], 10)
-        self.assertEqual(talents["spe"], 3)
+        self.assertEqual(talents["spe"], 7)
 
     def test_rejects_more_than_three_nonzero(self):
         with self.assertRaises(rc.TalentError):
@@ -76,6 +76,19 @@ class TestTalents(unittest.TestCase):
     def test_rejects_out_of_range(self):
         with self.assertRaises(rc.TalentError):
             rc.normalize_talents({"atk": 11})
+
+    def test_only_zero_and_seven_to_ten_are_valid(self):
+        for value in (0, 7, 8, 9, 10):
+            self.assertEqual(
+                rc.normalize_talents({"atk": value})["atk"], value
+            )
+        for value in (1, 2, 3, 4, 5, 6, 11):
+            with self.assertRaises(rc.TalentError):
+                rc.normalize_talents({"atk": value})
+
+    def test_stat_formula_rejects_impossible_talent(self):
+        with self.assertRaises(rc.TalentError):
+            rc.calculate_stat(100, 3, None, "atk", 60)
 
     def test_rejects_unknown_key(self):
         with self.assertRaises(rc.TalentError):
@@ -577,8 +590,8 @@ class TestCli(unittest.TestCase):
     def test_parse_talents(self):
         import calc
         self.assertEqual(
-            calc.parse_talents("物攻=10,速度=3"),
-            {"物攻": 10, "速度": 3},
+            calc.parse_talents("物攻=10,速度=7"),
+            {"物攻": 10, "速度": 7},
         )
 
     def test_format_result(self):
