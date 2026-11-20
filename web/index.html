@@ -3,110 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>洛克王国世界 · 伤害范围</title>
+  <title>洛克王国世界 · 6 对 6 伤害范围</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="page-header">
-    <h1>洛克王国世界 · 伤害范围</h1>
-    <p>我方性格和天分已知；对方只知道种类，所以伤害显示为一个范围。</p>
+    <div class="header-main">
+      <h1>洛克王国世界 · 6 对 6 伤害范围</h1>
+      <p>我方全部已知；对方只知道精灵种类，技能和状态由战斗记录逐步缩小范围。</p>
+    </div>
+    <label class="weather-field">
+      天气
+      <select id="weather">
+        <option value="">无</option>
+        <option value="雨天">雨天</option>
+      </select>
+    </label>
   </header>
 
-  <main>
-    <section class="card battle">
-      <div class="side">
-        <h2>我方（已知）</h2>
-        <div class="grid">
-          <label>精灵<select id="our-pet"></select></label>
-          <label>性格<select id="our-nature"></select></label>
+  <main class="page-main">
+    <section class="card teams-card">
+      <div class="teams">
+        <div class="team-column">
+          <div class="section-head">
+            <h2>我方</h2>
+            <span class="hint">点位置切换当前出战 · 每只最多 4 个技能</span>
+          </div>
+          <div id="our-team" class="team-list"></div>
         </div>
-
-        <h3>天分 <span class="hint">最多三项有加成</span></h3>
-        <div class="talents" id="our-talents"></div>
-
-        <h3>六维</h3>
-        <ul class="stats" id="our-stats">
-          <li class="hint">计算后显示</li>
-        </ul>
-
-        <h3>增减益 <span class="hint">四维每层 10 个百分点，速度每层 10 点</span></h3>
-        <div class="buffs" id="our-buffs"></div>
-      </div>
-
-      <div class="side">
-        <h2>对方（未知性格和天分）</h2>
-        <div class="grid">
-          <label>精灵<select id="opp-pet"></select></label>
+        <div class="team-column">
+          <div class="section-head">
+            <h2>对方</h2>
+            <span class="hint">技能初始为空，可以随时添加</span>
+          </div>
+          <div id="opp-team" class="team-list"></div>
         </div>
-
-        <h3>六维范围</h3>
-        <ul class="stats" id="opp-stats">
-          <li class="hint">计算后显示</li>
-        </ul>
-
-        <details id="nature-details" hidden>
-          <summary id="nature-summary">可能性格</summary>
-          <ul class="chips" id="nature-list"></ul>
-        </details>
-
-        <h3>增减益 <span class="hint">四维每层 10 个百分点，速度每层 10 点</span></h3>
-        <div class="buffs" id="opp-buffs"></div>
       </div>
     </section>
 
-    <section class="card">
-      <h2>技能与状态</h2>
-      <div class="grid">
-        <label>搜索技能
-          <input id="skill-filter" type="search" placeholder="输入技能名筛选，例如 气泡">
-        </label>
-        <label>技能<select id="skill"></select></label>
-        <label>天气
-          <select id="weather">
-            <option value="">无</option>
-            <option value="雨天">雨天</option>
-          </select>
-        </label>
-        <label>星陨层数
-          <input id="starfall" type="number" min="0" max="99" step="1" value="0">
-        </label>
-        <label>连击次数
-          <input id="hits" type="number" min="1" max="99" step="1" value="1">
-        </label>
+    <section class="card active-card">
+      <div class="section-head">
+        <h2>当前出战</h2>
+        <span class="hint">技能表是从当前状态再打一次的预测，不是历史记录</span>
       </div>
-      <p id="skill-info" class="note"></p>
-      <div id="damage-result"></div>
+      <div id="active-head" class="active-head"></div>
+      <div id="active-tables" class="skill-columns"></div>
+      <div id="warnings" class="warnings" hidden></div>
       <p id="status" class="status"></p>
-    </section>
-
-    <section class="card">
-      <h2>战斗记录 <span class="hint">按填写顺序缩小对方范围</span></h2>
-      <div class="record-form">
-        <label>类型
-          <select id="record-type">
-            <option value="damage">伤害</option>
-            <option value="hp_percent">生命百分比</option>
-          </select>
-        </label>
-        <label id="record-damage-field">伤害
-          <input id="record-damage" type="number" min="0" step="1" placeholder="例如 341">
-        </label>
-        <label id="record-percent-field" hidden>剩余生命 %
-          <input id="record-percent" type="number" min="0" max="100" step="1" placeholder="例如 50">
-        </label>
-        <label id="record-total-field" hidden>累计伤害
-          <input id="record-total" type="number" min="0" step="1" placeholder="例如 195">
-        </label>
-        <button id="add-record" type="button">添加记录</button>
-      </div>
-      <p class="note">
-        伤害填这一轮总共打掉的血量（连击按总数）；记录会记住添加时的技能、天气、
-        增减益、星陨层数和连击。生命百分比记录使用“到那一刻为止的累计伤害”，
-        自动填写后可以手动改。
-      </p>
-      <p id="record-status" class="status"></p>
-      <ol id="record-list" class="record-list"></ol>
-      <div id="record-warnings" class="warnings" hidden></div>
     </section>
   </main>
 
