@@ -1,0 +1,9 @@
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 爬虫离线缓存（可由脚本重新生成）
+.cache/
+
+# 本机编辑器/工具的个人设置
+.claude/settings.local.json
