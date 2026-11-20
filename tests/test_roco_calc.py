@@ -253,12 +253,15 @@ class TestDamageFormula(unittest.TestCase):
         result = self._article_case(attack_modifier_percent=100)
         self.assertEqual(result["ability_multiplier"], 2.0)
         self.assertEqual(result["display_power"], 713)
-        self.assertEqual(result["damage"], 666)
+        self.assertEqual(result["display_power_raw"], 712.5)
+        # 伤害使用未取整的 712.5；若用取整后的 713 会高 1 点。
+        self.assertEqual(result["damage"], 665)
 
     def test_defense_stage_modifier(self):
         result = self._article_case(defense_modifier_percent=-100)
         self.assertEqual(result["ability_multiplier"], 2.0)
-        self.assertEqual(result["damage"], 666)
+        self.assertEqual(result["display_power_raw"], 712.5)
+        self.assertEqual(result["damage"], 665)
 
     def test_power_percent(self):
         result = self._article_case(power_percent=10)
@@ -298,6 +301,67 @@ class TestDamageFormula(unittest.TestCase):
         json.dumps(result, ensure_ascii=False)
 
 
+class TestWeatherDamage(unittest.TestCase):
+    """游戏内实测：水灵（聪明、魔攻天分 10）打龙息帕尔。"""
+
+    def _water_case(self, skill, **overrides):
+        options = {
+            "attacker_nature": "聪明",
+            "attacker_talents": {"spa": 10},
+        }
+        options.update(overrides)
+        return rc.calculate_matchup("水灵", "龙息帕尔", skill, **options)
+
+    def test_bubble_without_rain(self):
+        result = self._water_case("气泡")
+        self.assertEqual(result["attacker_stat"], 270)
+        self.assertEqual(result["defender_defense"], 156)
+        self.assertEqual(result["display_power"], 125)
+        self.assertEqual(result["display_power_raw"], 125.0)
+        self.assertEqual(result["damage"], 195)
+
+    def test_bubble_with_rain(self):
+        result = self._water_case("气泡", weather="雨天")
+        self.assertEqual(result["base_power"], 100)
+        self.assertEqual(result["weather_base_power"], 175)
+        self.assertEqual(result["effective_power"], 175)
+        self.assertEqual(result["display_power"], 219)
+        self.assertAlmostEqual(result["display_power_raw"], 218.75)
+        self.assertEqual(result["damage"], 341)
+
+    def test_water_cannon_without_rain_keeps_fractional_power(self):
+        result = self._water_case("水炮")
+        self.assertEqual(result["display_power"], 138)
+        self.assertEqual(result["display_power_raw"], 137.5)
+        self.assertEqual(result["damage"], 214)
+
+    def test_water_cannon_with_rain(self):
+        result = self._water_case("水炮", weather="雨天")
+        self.assertEqual(result["base_power"], 110)
+        self.assertEqual(result["weather_base_power"], 192)
+        self.assertEqual(result["effective_power"], 192)
+        self.assertEqual(result["display_power"], 240)
+        self.assertEqual(result["display_power_raw"], 240.0)
+        self.assertEqual(result["damage"], 374)
+
+    def test_non_water_skill_ignores_rain(self):
+        result = rc.calculate_matchup(
+            "岚鸟", "奇丽花", "扇风",
+            attacker_form="本来的样子",
+            attacker_talents={"atk": 10},
+            defender_talents={"def": 10},
+            power=142.5,
+            weather="雨天",
+        )
+        self.assertEqual(result["weather_power_multiplier"], 1.0)
+        self.assertEqual(result["damage"], 332)
+
+    def test_other_weather_does_not_change_damage(self):
+        result = self._water_case("气泡", weather="沙暴")
+        self.assertEqual(result["weather_power_multiplier"], 1.0)
+        self.assertEqual(result["damage"], 195)
+
+
 class TestCli(unittest.TestCase):
     def test_parse_talents(self):
         import calc
@@ -319,6 +383,20 @@ class TestCli(unittest.TestCase):
         self.assertIn("显示威力：356", text)
         self.assertIn("总伤害：332", text)
         self.assertIn("不能击倒", text)
+
+    def test_format_result_with_rain(self):
+        import calc
+        result = rc.calculate_matchup(
+            "水灵", "龙息帕尔", "水炮",
+            attacker_nature="聪明",
+            attacker_talents={"spa": 10},
+            weather="雨天",
+        )
+        text = calc.format_result(result)
+        self.assertIn("天气：雨天", text)
+        self.assertIn("天气修正后基础威力：192", text)
+        self.assertIn("显示威力：240", text)
+        self.assertIn("总伤害：374", text)
 
 
 if __name__ == "__main__":

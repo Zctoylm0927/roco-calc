@@ -44,6 +44,12 @@ TYPE_ORDER = (
 )
 TYPE_SET = set(TYPE_ORDER)
 
+# 天气对基础威力的影响。目前只实现雨天：双方水系技能威力 +75%。
+# 其余天气（沙暴、暴风雪、雷鸣、霞光梦境）暂不参与伤害，只作为文本传给结果。
+WEATHER_POWER_MULTIPLIERS = {
+    ("雨天", "水系"): 1.75,
+}
+
 
 class RocoCalcError(Exception):
     """本库所有可预期错误的基类。"""
@@ -222,6 +228,13 @@ def _ability_multiplier(attack_modifier_percent, defense_modifier_percent):
     return numerator / denominator
 
 
+def _weather_power_multiplier(weather, skill_element):
+    """返回天气对基础威力的倍率；没有对应天气时返回 1.0。"""
+    if weather is None:
+        return 1.0
+    return WEATHER_POWER_MULTIPLIERS.get((str(weather).strip(), skill_element), 1.0)
+
+
 def calculate_damage(
     attacker,
     defender,
@@ -239,17 +252,24 @@ def calculate_damage(
     hit_count=1,
     misc_multiplier=1.0,
     ignore_type_resistance=False,
+    weather=None,
 ):
     """计算一次技能的伤害。
 
     attacker / defender 是 build_panel() 的返回值（含 pet、stats、level）。
     skill 是 find_skill() 返回的攻击技能。
 
-    计算顺序（与 tzrain 参考实现一致）:
-        有效威力 = (基础威力 + 固定加成) × (1 + 威力百分比)
-        显示威力 = round(有效威力 × 本系 × 克制 × 其他乘区 × 攻防等级)
-        单次伤害 = floor(round(攻击 × 显示威力 × 减伤 × 等级系数) / 防御)
+    计算顺序:
+        天气基础威力 = floor(基础威力 × 天气倍率)   # 雨天水系为 ×1.75
+        有效威力 = (天气基础威力 + 固定加成) × (1 + 威力百分比)
+        伤害威力 = (有效威力 + 只影响伤害的固定加成) × (1 + 只影响伤害的百分比)
+        显示威力（未取整） = 伤害威力 × 本系 × 克制 × 其他乘区 × 攻防等级
+        显示威力（界面）   = round(显示威力（未取整）)
+        单次伤害 = floor(round(攻击 × 显示威力（未取整） × 减伤 × 等级系数) / 防御)
         总伤害   = floor(单次伤害 × 连击 × 最终乘区)
+
+    注意：伤害公式使用未取整的显示威力。游戏内水炮（威力 110）无雨伤害为
+    214，若先把 137.5 取整成 138 会得到 215，因此不能用 round 后的值。
     """
     if skill.get("category") != "攻击":
         raise NotDamageSkillError(
@@ -277,8 +297,14 @@ def calculate_damage(
             f"技能“{skill.get('name', '')}”没有基础威力，请用 power 参数手动指定。"
         )
     base_power = float(skill["power"] if power is None else power)
+    weather_multiplier = _weather_power_multiplier(weather, skill["element"])
+    weather_base_power = (
+        math.floor(base_power * weather_multiplier)
+        if weather_multiplier != 1.0
+        else base_power
+    )
     effective_power = max(
-        0.0, (base_power + power_bonus) * (1 + power_percent / 100)
+        0.0, (weather_base_power + power_bonus) * (1 + power_percent / 100)
     )
     damage_power = max(
         0.0,
@@ -296,18 +322,19 @@ def calculate_damage(
     reduction_mult = max(0.0, 1 - damage_reduction_percent / 100)
     final_mult = min(max(float(damage_multiplier_percent), 0), 500) / 100
 
-    display_power = js_round(
+    display_power_raw = (
         damage_power * stab * type_mult * float(misc_multiplier) * ability_mult
     )
+    display_power = js_round(display_power_raw)
 
     level_coefficient = (45 * level / 100 + 10) / 41
-    if attacker_stat <= 0 or display_power <= 0 or defender_defense <= 0:
+    if attacker_stat <= 0 or display_power_raw <= 0 or defender_defense <= 0:
         per_hit = 0
     else:
         per_hit = math.floor(
             js_round(
                 attacker_stat
-                * display_power
+                * display_power_raw
                 * reduction_mult
                 * level_coefficient
             )
@@ -328,8 +355,12 @@ def calculate_damage(
         "defender_defense": defender_defense,
         "defender_hp": defender_hp,
         "base_power": base_power,
+        "weather": weather,
+        "weather_power_multiplier": weather_multiplier,
+        "weather_base_power": weather_base_power,
         "effective_power": effective_power,
         "display_power": display_power,
+        "display_power_raw": display_power_raw,
         "stab": stab,
         "type_multiplier": type_mult,
         "ability_multiplier": ability_mult,
@@ -356,6 +387,7 @@ def calculate_matchup(
     attacker_talents=None,
     defender_talents=None,
     level=60,
+    weather=None,
     **damage_options,
 ):
     """高层入口：按名称查找双方和技能，算面板后计算伤害。"""
@@ -374,7 +406,9 @@ def calculate_matchup(
         level=level,
     )
     skill = find_skill(skill_name)
-    return calculate_damage(attacker, defender, skill, **damage_options)
+    return calculate_damage(
+        attacker, defender, skill, weather=weather, **damage_options
+    )
 
 
 def _split_name_form(text, form=None):

@@ -95,6 +95,8 @@ def build_parser():
     parser.add_argument("--hits", type=int, default=1, help="连击次数，默认 1")
     parser.add_argument("--misc-multiplier", type=float, default=1.0,
                         help="其他乘区，默认 1")
+    parser.add_argument("--weather", default=None,
+                        help="天气，例如 雨天；目前只有雨天影响伤害（水系技能威力加百分之七十五）")
     parser.add_argument("--ignore-type-resistance", action="store_true",
                         help="忽略属性抵抗（抵抗按 ×1 计算）")
     parser.add_argument("--json", action="store_true",
@@ -162,6 +164,18 @@ def format_result(result):
     )
     if skill.get("power_text"):
         lines.append(f"  威力备注：{skill['power_text']}")
+    if result.get("weather"):
+        weather = result["weather"]
+        if result["weather_power_multiplier"] != 1:
+            lines.append(
+                f"  天气：{weather}（水系技能基础威力 "
+                f"×{_fmt(result['weather_power_multiplier'])}，向下取整）"
+            )
+            lines.append(
+                f"  天气修正后基础威力：{_fmt(result['weather_base_power'])}"
+            )
+        else:
+            lines.append(f"  天气：{weather}（暂不影响伤害）")
     lines.append(f"  有效威力：{_fmt(result['effective_power'])}")
     lines.append(f"  本系加成：×{_fmt(result['stab'])}")
     lines.append(f"  属性克制：×{_fmt(result['type_multiplier'])}")
@@ -172,6 +186,10 @@ def format_result(result):
             f"  减伤乘区：×{_fmt(result['damage_reduction_multiplier'])}"
         )
     lines.append(f"  显示威力：{result['display_power']}")
+    if result["display_power_raw"] != result["display_power"]:
+        lines.append(
+            f"  计算用威力：{_fmt(result['display_power_raw'])}（未取整）"
+        )
     lines.append("")
 
     lines.append(f"受击方：{_pet_title(defender)}")
@@ -231,6 +249,7 @@ def main(argv=None):
             damage_multiplier_percent=args.damage_multiplier,
             hit_count=args.hits,
             misc_multiplier=args.misc_multiplier,
+            weather=args.weather,
             ignore_type_resistance=args.ignore_type_resistance,
         )
     except rc.RocoCalcError as exc:
