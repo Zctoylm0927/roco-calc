@@ -57,6 +57,11 @@ BUFF_PERCENT_PER_LAYER = 10
 SPEED_POINTS_PER_LAYER = 10
 BUFF_LAYER_LIMIT = 99
 
+# 星陨印记：受击方身上的层数，使用非幻系攻击技能时触发一次，
+# 消耗全部层数，造成额外的幻系伤害。层数目前限制在 0～99。
+STARFALL_ELEMENT = "幻系"
+STARFALL_LAYER_LIMIT = 99
+
 
 class RocoCalcError(Exception):
     """本库所有可预期错误的基类。"""
@@ -246,6 +251,82 @@ def _weather_power_multiplier(weather, skill_element):
     return WEATHER_POWER_MULTIPLIERS.get((str(weather).strip(), skill_element), 1.0)
 
 
+def starfall_base_power(layers):
+    """星陨印记的基础威力：层数² + 24×层数 − 24，结果小于 0 时按 0 处理。"""
+    if layers <= 0:
+        return 0
+    return max(0, layers * layers + 24 * layers - 24)
+
+
+def _calculate_starfall(
+    layers,
+    skill,
+    defender,
+    attacker_stat,
+    defender_defense,
+    ability_mult,
+    reduction_mult,
+    level_coefficient,
+    final_mult,
+):
+    """计算星陨印记的额外伤害。
+
+    触发条件：受击方有层数，且本次技能不是幻系。触发后消耗全部层数。
+    取整顺序照 tzrain：先对「基础威力 × 幻系克制」取整，再对
+    「× 攻防乘区」取整，然后套用与普通技能相同的伤害公式（连击按 1 次，
+    不加本系、不加其他乘区）。
+    """
+    result = {
+        "layers": layers,
+        "triggered": False,
+        "layers_consumed": 0,
+        "layers_after": layers,
+        "base_power": 0,
+        "type_multiplier": 0.0,
+        "display_power": 0,
+        "ability_power": 0,
+        "damage": 0,
+        "damage_percent": 0.0,
+    }
+    if layers <= 0 or skill["element"] == STARFALL_ELEMENT:
+        return result
+
+    base_power = starfall_base_power(layers)
+    type_mult = type_multiplier(STARFALL_ELEMENT, defender["pet"]["types"])
+    display_power = js_round(base_power * type_mult)
+    ability_power = js_round(display_power * ability_mult)
+
+    if attacker_stat <= 0 or ability_power <= 0 or defender_defense <= 0:
+        per_hit = 0
+    else:
+        per_hit = math.floor(
+            js_round(
+                attacker_stat
+                * ability_power
+                * reduction_mult
+                * level_coefficient
+            )
+            / defender_defense
+        )
+    damage = math.floor(per_hit * final_mult)
+    defender_hp = defender["stats"]["hp"]
+
+    result.update(
+        {
+            "triggered": True,
+            "layers_consumed": layers,
+            "layers_after": 0,
+            "base_power": base_power,
+            "type_multiplier": type_mult,
+            "display_power": display_power,
+            "ability_power": ability_power,
+            "damage": damage,
+            "damage_percent": damage / defender_hp * 100 if defender_hp > 0 else 0.0,
+        }
+    )
+    return result
+
+
 def calculate_damage(
     attacker,
     defender,
@@ -260,6 +341,7 @@ def calculate_damage(
     defense_modifier_percent=0,
     attacker_buffs=None,
     defender_buffs=None,
+    starfall_layers=0,
     damage_reduction_percent=0,
     damage_multiplier_percent=100,
     hit_count=1,
@@ -279,10 +361,21 @@ def calculate_damage(
         显示威力（未取整） = 伤害威力 × 本系 × 克制 × 其他乘区 × 攻防乘区
         显示威力（界面）   = round(显示威力（未取整）)
         单次伤害 = floor(round(攻击 × 显示威力（未取整） × 减伤 × 等级系数) / 防御)
-        总伤害   = floor(单次伤害 × 连击 × 最终乘区)
+        技能伤害 = floor(单次伤害 × 连击 × 最终乘区)
+
+    星陨印记（受击方有层数且本次技能不是幻系时触发一次）:
+        星陨基础威力 = 层数² + 24×层数 − 24
+        星陨显示威力 = round(星陨基础威力 × 幻系克制)
+        攻防调整后威力 = round(星陨显示威力 × 攻防乘区)
+        星陨伤害 = floor(round(攻击 × 攻防调整后威力 × 减伤 × 等级系数) / 防御)
+                  再乘最终乘区并向下取整
+
+    总伤害 = 技能伤害 + 星陨伤害
 
     注意：伤害公式使用未取整的显示威力。游戏内水炮（威力 110）无雨伤害为
     214，若先把 137.5 取整成 138 会得到 215，因此不能用 round 后的值。
+    星陨目前没有游戏内实测数字，取整顺序完全照 tzrain，差异对比例子见
+    docs/todo.md。
     """
     if skill.get("category") != "攻击":
         raise NotDamageSkillError(
@@ -294,6 +387,12 @@ def calculate_damage(
         )
     if isinstance(hit_count, bool) or not isinstance(hit_count, int) or hit_count < 1:
         raise DamageInputError("连击次数必须是大于等于 1 的整数。")
+    if isinstance(starfall_layers, bool) or not isinstance(starfall_layers, int):
+        raise DamageInputError("星陨层数必须是整数。")
+    if not 0 <= starfall_layers <= STARFALL_LAYER_LIMIT:
+        raise DamageInputError(
+            f"星陨层数必须是 0～{STARFALL_LAYER_LIMIT} 之间的整数。"
+        )
 
     if skill["damage_class"] == "物攻":
         attack_key, defense_key = "atk", "def"
@@ -371,6 +470,22 @@ def calculate_damage(
     damage = math.floor(per_hit * hit_count * final_mult)
     damage_percent = damage / defender_hp * 100 if defender_hp > 0 else 0.0
 
+    starfall = _calculate_starfall(
+        starfall_layers,
+        skill,
+        defender,
+        attacker_stat,
+        defender_defense,
+        ability_mult,
+        reduction_mult,
+        level_coefficient,
+        final_mult,
+    )
+    total_damage = damage + starfall["damage"]
+    total_damage_percent = (
+        total_damage / defender_hp * 100 if defender_hp > 0 else 0.0
+    )
+
     return {
         "attacker": attacker,
         "defender": defender,
@@ -406,7 +521,12 @@ def calculate_damage(
         "damage_per_hit": per_hit,
         "damage": damage,
         "damage_percent": damage_percent,
-        "is_knockout": damage >= defender_hp,
+        "starfall_layers": starfall_layers,
+        "starfall": starfall,
+        "starfall_damage": starfall["damage"],
+        "total_damage": total_damage,
+        "total_damage_percent": total_damage_percent,
+        "is_knockout": total_damage >= defender_hp,
     }
 
 
@@ -425,6 +545,7 @@ def calculate_matchup(
     weather=None,
     attacker_buffs=None,
     defender_buffs=None,
+    starfall_layers=0,
     **damage_options,
 ):
     """高层入口：按名称查找双方和技能，算面板后计算伤害。"""
@@ -450,6 +571,7 @@ def calculate_matchup(
         weather=weather,
         attacker_buffs=attacker_buffs,
         defender_buffs=defender_buffs,
+        starfall_layers=starfall_layers,
         **damage_options,
     )
 

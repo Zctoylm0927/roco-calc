@@ -122,6 +122,8 @@ def build_parser():
     parser.add_argument("--hits", type=int, default=1, help="连击次数，默认 1")
     parser.add_argument("--misc-multiplier", type=float, default=1.0,
                         help="其他乘区，默认 1")
+    parser.add_argument("--starfall-layers", type=int, default=0,
+                        help="受击方身上的星陨印记层数（0～99）；非幻系攻击技能触发并消耗全部层数")
     parser.add_argument("--weather", default=None,
                         help="天气，例如 雨天；目前只有雨天影响伤害（水系技能威力加百分之七十五）")
     parser.add_argument("--ignore-type-resistance", action="store_true",
@@ -257,6 +259,31 @@ def format_result(result):
         lines.append(
             f"  计算用威力：{_fmt(result['display_power_raw'])}（未取整）"
         )
+
+    starfall = result["starfall"]
+    if result["starfall_layers"]:
+        lines.append("")
+        if starfall["triggered"]:
+            layers = starfall["layers"]
+            lines.append(f"星陨印记：{layers} 层（触发，消耗全部层数）")
+            lines.append(
+                f"  基础威力：{starfall['base_power']}"
+                f"（{layers}² + 24×{layers} − 24）"
+            )
+            lines.append(f"  幻系克制：×{_fmt(starfall['type_multiplier'])}")
+            lines.append(
+                f"  显示威力：{starfall['display_power']}（四舍五入）"
+            )
+            lines.append(
+                f"  攻防调整后威力：{starfall['ability_power']}"
+                f"（×{_fmt(result['ability_multiplier'])}，四舍五入）"
+            )
+            lines.append(f"  星陨额外伤害：{starfall['damage']}")
+        else:
+            lines.append(
+                f"星陨印记：{starfall['layers']} 层"
+                f"（幻系技能不触发，层数保留）"
+            )
     lines.append("")
 
     lines.append(f"受击方：{_pet_title(defender)}")
@@ -286,10 +313,20 @@ def format_result(result):
         f"连击：{result['hit_count']}    "
         f"最终乘区：×{_fmt(result['damage_multiplier'])}"
     )
-    lines.append(
-        f"  总伤害：{result['damage']}"
-        f"（占最大生命 {result['damage_percent']:.1f}%）"
-    )
+    if result["starfall_layers"]:
+        lines.append(
+            f"  技能伤害：{result['damage']}    "
+            f"星陨额外伤害：{result['starfall_damage']}"
+        )
+        lines.append(
+            f"  总伤害：{result['total_damage']}"
+            f"（占最大生命 {result['total_damage_percent']:.1f}%）"
+        )
+    else:
+        lines.append(
+            f"  总伤害：{result['damage']}"
+            f"（占最大生命 {result['damage_percent']:.1f}%）"
+        )
     verdict = "可以击倒" if result["is_knockout"] else "不能击倒"
     lines.append(f"  {verdict}（最大生命 {result['defender_hp']}）")
     lines.append("=" * 52)
@@ -313,6 +350,7 @@ def main(argv=None):
             defender_talents=args.defender_talents,
             attacker_buffs=args.attacker_buffs,
             defender_buffs=args.defender_buffs,
+            starfall_layers=args.starfall_layers,
             level=args.level,
             power=args.power,
             power_bonus=args.power_bonus,

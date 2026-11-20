@@ -438,6 +438,107 @@ class TestBuffLayers(unittest.TestCase):
         self.assertEqual(result["damage"], 410)
 
 
+class TestStarfall(unittest.TestCase):
+    """星陨印记：非幻系攻击技能命中带印记的受击方时触发一次，消耗全部层数。"""
+
+    def _water_case(self, skill="气泡", **overrides):
+        options = {
+            "attacker_nature": "聪明",
+            "attacker_talents": {"spa": 10},
+        }
+        options.update(overrides)
+        return rc.calculate_matchup("水灵", "龙息帕尔", skill, **options)
+
+    def test_base_power_table(self):
+        expected = {0: 0, 1: 1, 2: 28, 3: 57, 5: 121, 10: 316}
+        for layers, power in expected.items():
+            self.assertEqual(rc.starfall_base_power(layers), power)
+
+    def test_zero_layers_does_not_trigger(self):
+        result = self._water_case(starfall_layers=0)
+        self.assertFalse(result["starfall"]["triggered"])
+        self.assertEqual(result["starfall_damage"], 0)
+        self.assertEqual(result["total_damage"], result["damage"])
+
+    def test_magic_channel_triggers_and_consumes_layers(self):
+        result = self._water_case(starfall_layers=3)
+        starfall = result["starfall"]
+        self.assertTrue(starfall["triggered"])
+        self.assertEqual(starfall["base_power"], 57)
+        self.assertEqual(starfall["type_multiplier"], 1.0)
+        self.assertEqual(starfall["display_power"], 57)
+        self.assertEqual(starfall["ability_power"], 57)
+        self.assertEqual(starfall["damage"], 89)
+        self.assertEqual(starfall["layers_consumed"], 3)
+        self.assertEqual(starfall["layers_after"], 0)
+        self.assertEqual(result["damage"], 195)
+        self.assertEqual(result["total_damage"], 284)
+
+    def test_physical_channel_uses_attack_and_defense(self):
+        result = rc.calculate_matchup(
+            "岚鸟", "奇丽花", "扇风",
+            attacker_form="本来的样子",
+            attacker_talents={"atk": 10},
+            defender_talents={"def": 10},
+            power=142.5,
+            starfall_layers=3,
+        )
+        self.assertEqual(result["attack_key"], "atk")
+        self.assertEqual(result["damage"], 332)
+        self.assertEqual(result["starfall_damage"], 53)
+        self.assertEqual(result["total_damage"], 385)
+
+    def test_illusion_skill_does_not_trigger(self):
+        result = self._water_case(skill="坍缩", starfall_layers=3)
+        self.assertFalse(result["starfall"]["triggered"])
+        self.assertEqual(result["starfall"]["layers_after"], 3)
+        self.assertEqual(result["starfall_damage"], 0)
+        self.assertEqual(result["total_damage"], 132)
+
+    def test_buff_layers_apply_to_starfall(self):
+        result = self._water_case(
+            starfall_layers=3, attacker_buffs={"魔攻": 2}
+        )
+        self.assertEqual(result["ability_multiplier"], 1.2)
+        self.assertEqual(result["starfall"]["display_power"], 57)
+        self.assertEqual(result["starfall"]["ability_power"], 68)
+        self.assertEqual(result["starfall_damage"], 106)
+        self.assertEqual(result["total_damage"], 340)
+
+    def test_rounding_difference_example(self):
+        # 迪莫是光系，幻系克制 ×0.5：57 × 0.5 = 28.5。
+        # tzrain 先四舍五入成 29，额外伤害 40；
+        # 若像普通技能一样保留 28.5，额外伤害会是 39（总伤害 213）。
+        result = rc.calculate_matchup(
+            "水灵", "迪莫", "气泡",
+            attacker_nature="聪明",
+            attacker_talents={"spa": 10},
+            starfall_layers=3,
+        )
+        self.assertEqual(result["starfall"]["display_power"], 29)
+        self.assertEqual(result["starfall_damage"], 40)
+        self.assertEqual(result["total_damage"], 214)
+
+    def test_hit_count_does_not_multiply_starfall(self):
+        result = self._water_case(starfall_layers=3, hit_count=2)
+        self.assertEqual(result["damage"], 390)
+        self.assertEqual(result["starfall_damage"], 89)
+        self.assertEqual(result["total_damage"], 479)
+
+    def test_final_multiplier_applies_to_starfall(self):
+        result = self._water_case(
+            starfall_layers=3, damage_multiplier_percent=50
+        )
+        self.assertEqual(result["damage"], 97)
+        self.assertEqual(result["starfall_damage"], 44)
+        self.assertEqual(result["total_damage"], 141)
+
+    def test_layer_validation(self):
+        for value in (-1, 100, 1.5):
+            with self.assertRaises(rc.DamageInputError):
+                self._water_case(starfall_layers=value)
+
+
 class TestCli(unittest.TestCase):
     def test_parse_buffs(self):
         import calc
@@ -458,6 +559,20 @@ class TestCli(unittest.TestCase):
         self.assertIn("增减益：魔攻 +2 层（+20 个百分点）", text)
         self.assertIn("攻防乘区：×1.2", text)
         self.assertIn("总伤害：234", text)
+
+    def test_format_result_with_starfall(self):
+        import calc
+        result = rc.calculate_matchup(
+            "水灵", "龙息帕尔", "气泡",
+            attacker_nature="聪明",
+            attacker_talents={"spa": 10},
+            starfall_layers=3,
+        )
+        text = calc.format_result(result)
+        self.assertIn("星陨印记：3 层（触发，消耗全部层数）", text)
+        self.assertIn("基础威力：57（3² + 24×3 − 24）", text)
+        self.assertIn("星陨额外伤害：89", text)
+        self.assertIn("总伤害：284", text)
 
     def test_parse_talents(self):
         import calc

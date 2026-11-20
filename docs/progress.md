@@ -55,6 +55,15 @@
   - 回归：水灵气泡打帕尔，魔攻 +2 层伤害 **234**；再加魔防 −1 层伤害 **253**
   - 测试从 55 个增加到 67 个
 
+- [x] **第九步：星陨印记**
+  - 新增 `--starfall-layers`：受击方身上的星陨层数（0～99）
+  - 非幻系攻击技能触发一次，消耗全部层数，造成额外幻系伤害
+  - 基础威力 = 层数² + 24×层数 − 24；按 tzrain 先乘幻系克制并取整，再乘攻防乘区并取整
+  - 星陨伤害与技能伤害分开列出，总伤害 = 两者相加
+  - 回归：水灵气泡打帕尔，3 层星陨额外 **89**，总伤害 **284**
+  - 取整差异的对比例子已记入 TODO：水灵打光系迪莫 3 层，tzrain 为 214，不取整为 213
+  - 测试从 67 个增加到 78 个
+
 ## 进行中
 
 （无）
@@ -91,7 +100,7 @@
 PYTHONIOENCODING=utf-8 python -m unittest discover -s tests -v
 ```
 
-应看到 `Ran 67 tests` 和 `OK`。
+应看到 `Ran 78 tests` 和 `OK`。
 
 跑公开文章实例：
 
@@ -127,3 +136,14 @@ PYTHONIOENCODING=utf-8 python calc.py \
 ```
 
 应看到 `攻防乘区：×1.3`、`计算用威力：162.5`、`总伤害：253`。
+
+跑星陨印记回归：
+
+```bash
+PYTHONIOENCODING=utf-8 python calc.py \
+  --attacker 水灵 --attacker-nature 聪明 \
+  --attacker-talents "魔攻=10" \
+  --defender 龙息帕尔 --skill 气泡 --starfall-layers 3
+```
+
+应看到 `星陨额外伤害：89`、`总伤害：284`。
