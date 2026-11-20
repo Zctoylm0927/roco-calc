@@ -502,6 +502,18 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
   --observe 341 --observe hp:50:195
 ```
 
+## 网页服务（第十一步）
+
+`server.py` 用 Python 自带的 `http.server`，不安装第三方包，默认只监听 `127.0.0.1:8000`：
+
+| 接口 | 作用 |
+|------|------|
+| `GET /api/meta` | 621 只精灵、30 种性格、358 个攻击技能 |
+| `POST /api/analyze` | 请求体同 `docs/frontend-design.md` 5.2 节，调用 `roco_analysis.analyze_battle` |
+| `GET /` 等 | `web/index.html`、`web/app.js`、`web/style.css` |
+
+错误统一返回 HTTP 400 和 `{"error": "中文原因"}`，不把堆栈发给浏览器；意外异常在服务器窗口打印，浏览器只看到一条通用提示。静态文件只白名单三个，不接受任意路径。
+
 ## 代码结构
 
 | 文件 | 作用 |
@@ -514,8 +526,13 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `roco_analysis.py` | 范围推断：对方 46,320 种候选、记录过滤、可能性格 |
 | `calc.py` | 伤害命令行入口（中文输出，支持 `--json`） |
 | `analyze.py` | 范围推断命令行演示 |
+| `server.py` | 本地网页服务：JSON 接口 + 静态页面 |
+| `web/index.html` | 网页结构（当前为最小页面） |
+| `web/app.js` | 网页交互 |
+| `web/style.css` | 网页样式 |
 | `tests/test_roco_calc.py` | 面板/伤害/增减益/星陨的单元测试 |
 | `tests/test_roco_analysis.py` | 范围推断的单元测试 |
+| `tests/test_server.py` | 网页接口和静态页面的测试 |
 
 数据文件：
 

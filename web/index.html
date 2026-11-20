@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>洛克王国世界 · 伤害范围</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="page-header">
+    <h1>洛克王国世界 · 伤害范围</h1>
+    <p>我方性格和天分已知；对方只知道种类，所以伤害显示为一个范围。</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>我方</h2>
+      <div class="grid">
+        <label>精灵<select id="our-pet"></select></label>
+        <label>性格<select id="our-nature"></select></label>
+        <label>物攻天分<select id="talent-atk" class="talent"></select></label>
+        <label>魔攻天分<select id="talent-spa" class="talent"></select></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>对方</h2>
+      <div class="grid">
+        <label>精灵<select id="opp-pet"></select></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>技能与天气</h2>
+      <div class="grid">
+        <label>技能<select id="skill"></select></label>
+        <label>天气
+          <select id="weather">
+            <option value="">无</option>
+            <option value="雨天">雨天</option>
+          </select>
+        </label>
+      </div>
+      <button id="calc" type="button">计算伤害范围</button>
+      <p id="status" class="status"></p>
+    </section>
+
+    <section id="result" class="card result" hidden></section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
