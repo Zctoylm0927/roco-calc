@@ -48,6 +48,13 @@
   - 新增 `--weather` 参数；其他天气目前只显示文本
   - 测试从 48 个增加到 55 个
 
+- [x] **第八步：增减益层数**
+  - 按层输入物攻/物防/魔攻/魔防/速度的增减益：`--attacker-buffs "魔攻=2"`、`--defender-buffs "魔防=-1"`
+  - 四维每层 10 个百分点；速度每层 +10 点，只影响展示的速度，不参与伤害
+  - 伤害只使用当前技能通道；层数百分比与 `--attack-mod` / `--defense-mod` 相加
+  - 回归：水灵气泡打帕尔，魔攻 +2 层伤害 **234**；再加魔防 −1 层伤害 **253**
+  - 测试从 55 个增加到 67 个
+
 ## 进行中
 
 （无）
@@ -84,7 +91,7 @@
 PYTHONIOENCODING=utf-8 python -m unittest discover -s tests -v
 ```
 
-应看到 `Ran 55 tests` 和 `OK`。
+应看到 `Ran 67 tests` 和 `OK`。
 
 跑公开文章实例：
 
@@ -108,3 +115,15 @@ PYTHONIOENCODING=utf-8 python calc.py \
 ```
 
 应看到 `天气修正后基础威力：192`、`显示威力：240`、`总伤害：374`。
+
+跑增减益回归：
+
+```bash
+PYTHONIOENCODING=utf-8 python calc.py \
+  --attacker 水灵 --attacker-nature 聪明 \
+  --attacker-talents "魔攻=10" \
+  --defender 龙息帕尔 --skill 气泡 \
+  --attacker-buffs "魔攻=2" --defender-buffs "魔防=-1"
+```
+
+应看到 `攻防乘区：×1.3`、`计算用威力：162.5`、`总伤害：253`。

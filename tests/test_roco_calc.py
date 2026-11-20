@@ -362,7 +362,103 @@ class TestWeatherDamage(unittest.TestCase):
         self.assertEqual(result["damage"], 195)
 
 
+class TestBuffLayers(unittest.TestCase):
+    """增减益按层输入：四维每层 10 个百分点，速度每层 +10 点。"""
+
+    def _water_case(self, skill="气泡", **overrides):
+        options = {
+            "attacker_nature": "聪明",
+            "attacker_talents": {"spa": 10},
+        }
+        options.update(overrides)
+        return rc.calculate_matchup("水灵", "龙息帕尔", skill, **options)
+
+    def test_default_is_all_zero(self):
+        buffs = rc.normalize_buffs()
+        self.assertEqual(set(buffs), set(rc.BUFF_KEYS))
+        self.assertTrue(all(value == 0 for value in buffs.values()))
+
+    def test_accepts_chinese_names_and_keys(self):
+        buffs = rc.normalize_buffs({"魔攻": 2, "spe": -1})
+        self.assertEqual(buffs["spa"], 2)
+        self.assertEqual(buffs["spe"], -1)
+
+    def test_rejects_hp(self):
+        with self.assertRaises(rc.BuffError):
+            rc.normalize_buffs({"生命": 1})
+
+    def test_rejects_non_integer_and_out_of_range(self):
+        with self.assertRaises(rc.BuffError):
+            rc.normalize_buffs({"魔攻": 1.5})
+        with self.assertRaises(rc.BuffError):
+            rc.normalize_buffs({"魔攻": 100})
+
+    def test_magic_attack_buff(self):
+        result = self._water_case(attacker_buffs={"魔攻": 2})
+        self.assertEqual(result["buff_attack_percent"], 20)
+        self.assertEqual(result["ability_multiplier"], 1.2)
+        self.assertEqual(result["display_power"], 150)
+        self.assertEqual(result["damage"], 234)
+
+    def test_magic_attack_and_defense_drop(self):
+        result = self._water_case(
+            attacker_buffs={"魔攻": 2}, defender_buffs={"魔防": -1}
+        )
+        self.assertEqual(result["buff_defense_percent"], -10)
+        self.assertEqual(result["ability_multiplier"], 1.3)
+        self.assertEqual(result["display_power_raw"], 162.5)
+        self.assertEqual(result["damage"], 253)
+
+    def test_off_channel_buffs_do_not_affect_damage(self):
+        result = self._water_case(
+            attacker_buffs={"物攻": 2}, defender_buffs={"物防": -1}
+        )
+        self.assertEqual(result["ability_multiplier"], 1.0)
+        self.assertEqual(result["damage"], 195)
+
+    def test_speed_layers_only_change_speed(self):
+        result = self._water_case(attacker_buffs={"速度": 2})
+        self.assertEqual(result["attacker_speed_after_buffs"], 173)
+        self.assertEqual(result["ability_multiplier"], 1.0)
+        self.assertEqual(result["damage"], 195)
+
+    def test_layers_add_to_explicit_modifiers(self):
+        result = self._water_case(
+            attacker_buffs={"魔攻": 1}, attack_modifier_percent=10
+        )
+        self.assertEqual(result["total_attack_modifier_percent"], 20)
+        self.assertEqual(result["damage"], 234)
+
+    def test_buffs_do_not_change_rain(self):
+        result = self._water_case(
+            attacker_buffs={"魔攻": 2}, weather="雨天"
+        )
+        self.assertEqual(result["weather_base_power"], 175)
+        self.assertEqual(result["display_power_raw"], 262.5)
+        self.assertEqual(result["damage"], 410)
+
+
 class TestCli(unittest.TestCase):
+    def test_parse_buffs(self):
+        import calc
+        self.assertEqual(
+            calc.parse_buffs("魔攻=2,速度=-1"),
+            {"魔攻": 2, "速度": -1},
+        )
+
+    def test_format_result_with_buffs(self):
+        import calc
+        result = rc.calculate_matchup(
+            "水灵", "龙息帕尔", "气泡",
+            attacker_nature="聪明",
+            attacker_talents={"spa": 10},
+            attacker_buffs={"魔攻": 2},
+        )
+        text = calc.format_result(result)
+        self.assertIn("增减益：魔攻 +2 层（+20 个百分点）", text)
+        self.assertIn("攻防乘区：×1.2", text)
+        self.assertIn("总伤害：234", text)
+
     def test_parse_talents(self):
         import calc
         self.assertEqual(

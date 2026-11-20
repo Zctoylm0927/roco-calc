@@ -47,6 +47,28 @@ def parse_talents(text):
     return result
 
 
+def parse_buffs(text):
+    """把「魔攻=2,速度=-1」解析成字典。"""
+    result = {}
+    for chunk in text.replace("，", ",").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" not in chunk:
+            raise argparse.ArgumentTypeError(
+                "增减益格式应为「魔攻=2,速度=-1」"
+            )
+        key, value = chunk.split("=", 1)
+        try:
+            value = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"增减益层数“{value}”不是整数"
+            )
+        result[key.strip()] = value
+    return result
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="洛克王国世界伤害计算器",
@@ -71,6 +93,11 @@ def build_parser():
                         help="攻击方天分，例如 物攻=10,速度=10")
     parser.add_argument("--defender-talents", type=parse_talents, default=None,
                         help="受击方天分，例如 物防=10")
+    parser.add_argument("--attacker-buffs", type=parse_buffs, default=None,
+                        help="攻击方增减益层数，例如 物攻=2,速度=-1；四维每层加十个百"
+                             "分点，速度每层加 10 点")
+    parser.add_argument("--defender-buffs", type=parse_buffs, default=None,
+                        help="受击方增减益层数，例如 物防=-1")
     parser.add_argument("--level", type=int, default=60, help="等级，默认 60")
 
     parser.add_argument("--power", type=float, default=None,
@@ -130,6 +157,25 @@ def _talents_text(talents):
     return " / ".join(parts) if parts else "全 0"
 
 
+def _buffs_text(buffs):
+    parts = []
+    for key in rc.BUFF_KEYS:
+        value = buffs[key]
+        if not value:
+            continue
+        if key == "spe":
+            parts.append(
+                f"{rc.STAT_NAMES[key]} {value:+d} 层"
+                f"（{value * rc.SPEED_POINTS_PER_LAYER:+d} 点）"
+            )
+        else:
+            parts.append(
+                f"{rc.STAT_NAMES[key]} {value:+d} 层"
+                f"（{value * rc.BUFF_PERCENT_PER_LAYER:+d} 个百分点）"
+            )
+    return " / ".join(parts)
+
+
 def _pet_title(panel):
     pet = panel["pet"]
     return pet["name"] + (f"（{pet['form']}）" if pet["form"] else "")
@@ -150,6 +196,13 @@ def format_result(result):
         f"天分：{_talents_text(attacker['talents'])}"
     )
     lines.append(f"  面板：{_panel_text(attacker['stats'])}")
+    if any(result["attacker_buffs"].values()):
+        lines.append(f"  增减益：{_buffs_text(result['attacker_buffs'])}")
+    if result["attacker_buffs"]["spe"]:
+        lines.append(
+            f"  增减益后速度：{result['attacker_speed_after_buffs']}"
+            f"（面板 {attacker['stats']['spe']}）"
+        )
     lines.append("")
 
     manual_power = result["base_power"] != (skill.get("power") or 0)
@@ -180,7 +233,21 @@ def format_result(result):
     lines.append(f"  本系加成：×{_fmt(result['stab'])}")
     lines.append(f"  属性克制：×{_fmt(result['type_multiplier'])}")
     if result["ability_multiplier"] != 1:
-        lines.append(f"  攻防等级：×{_fmt(result['ability_multiplier'])}")
+        parts = []
+        attack_total = result["total_attack_modifier_percent"]
+        defense_total = result["total_defense_modifier_percent"]
+        if attack_total:
+            parts.append(
+                f"攻方{rc.STAT_NAMES[result['attack_key']]} "
+                f"{attack_total:+g} 个百分点"
+            )
+        if defense_total:
+            parts.append(
+                f"守方{rc.STAT_NAMES[result['defense_key']]} "
+                f"{defense_total:+g} 个百分点"
+            )
+        note = f"（{'，'.join(parts)}）" if parts else ""
+        lines.append(f"  攻防乘区：×{_fmt(result['ability_multiplier'])}{note}")
     if result["damage_reduction_multiplier"] != 1:
         lines.append(
             f"  减伤乘区：×{_fmt(result['damage_reduction_multiplier'])}"
@@ -200,6 +267,13 @@ def format_result(result):
         f"天分：{_talents_text(defender['talents'])}"
     )
     lines.append(f"  面板：{_panel_text(defender['stats'])}")
+    if any(result["defender_buffs"].values()):
+        lines.append(f"  增减益：{_buffs_text(result['defender_buffs'])}")
+    if result["defender_buffs"]["spe"]:
+        lines.append(
+            f"  增减益后速度：{result['defender_speed_after_buffs']}"
+            f"（面板 {defender['stats']['spe']}）"
+        )
     lines.append(
         f"  对应防御：{rc.STAT_NAMES[result['defense_key']]} "
         f"{result['defender_defense']}"
@@ -237,6 +311,8 @@ def main(argv=None):
             defender_nature=args.defender_nature,
             attacker_talents=args.attacker_talents,
             defender_talents=args.defender_talents,
+            attacker_buffs=args.attacker_buffs,
+            defender_buffs=args.defender_buffs,
             level=args.level,
             power=args.power,
             power_bonus=args.power_bonus,

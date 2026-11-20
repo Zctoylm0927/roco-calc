@@ -50,6 +50,13 @@ WEATHER_POWER_MULTIPLIERS = {
     ("雨天", "水系"): 1.75,
 }
 
+# 属性增减益按层输入。物攻/物防/魔攻/魔防每层等于 10 个百分点；
+# 速度每层等于固定的 +10 点（不参与伤害，只影响出手顺序，当前只做展示）。
+BUFF_KEYS = ("atk", "def", "spa", "spd", "spe")
+BUFF_PERCENT_PER_LAYER = 10
+SPEED_POINTS_PER_LAYER = 10
+BUFF_LAYER_LIMIT = 99
+
 
 class RocoCalcError(Exception):
     """本库所有可预期错误的基类。"""
@@ -80,6 +87,10 @@ class NatureNotFoundError(RocoCalcError):
 
 class TalentError(RocoCalcError):
     """天分数值不合法。"""
+
+
+class BuffError(RocoCalcError):
+    """增减益层数不合法。"""
 
 
 class SkillNotFoundError(RocoCalcError):
@@ -247,6 +258,8 @@ def calculate_damage(
     damage_only_power_percent=0,
     attack_modifier_percent=0,
     defense_modifier_percent=0,
+    attacker_buffs=None,
+    defender_buffs=None,
     damage_reduction_percent=0,
     damage_multiplier_percent=100,
     hit_count=1,
@@ -263,7 +276,7 @@ def calculate_damage(
         天气基础威力 = floor(基础威力 × 天气倍率)   # 雨天水系为 ×1.75
         有效威力 = (天气基础威力 + 固定加成) × (1 + 威力百分比)
         伤害威力 = (有效威力 + 只影响伤害的固定加成) × (1 + 只影响伤害的百分比)
-        显示威力（未取整） = 伤害威力 × 本系 × 克制 × 其他乘区 × 攻防等级
+        显示威力（未取整） = 伤害威力 × 本系 × 克制 × 其他乘区 × 攻防乘区
         显示威力（界面）   = round(显示威力（未取整）)
         单次伤害 = floor(round(攻击 × 显示威力（未取整） × 减伤 × 等级系数) / 防御)
         总伤害   = floor(单次伤害 × 连击 × 最终乘区)
@@ -286,6 +299,20 @@ def calculate_damage(
         attack_key, defense_key = "atk", "def"
     else:
         attack_key, defense_key = "spa", "spd"
+
+    # 增减益只取当前技能走的这条通道：物攻技能看物攻/物防，魔攻技能看魔攻/魔防。
+    attacker_buffs = normalize_buffs(attacker_buffs)
+    defender_buffs = normalize_buffs(defender_buffs)
+    buff_attack_percent = attacker_buffs[attack_key] * BUFF_PERCENT_PER_LAYER
+    buff_defense_percent = defender_buffs[defense_key] * BUFF_PERCENT_PER_LAYER
+    total_attack_modifier = float(attack_modifier_percent) + buff_attack_percent
+    total_defense_modifier = float(defense_modifier_percent) + buff_defense_percent
+    attacker_speed_after_buffs = (
+        attacker["stats"]["spe"] + attacker_buffs["spe"] * SPEED_POINTS_PER_LAYER
+    )
+    defender_speed_after_buffs = (
+        defender["stats"]["spe"] + defender_buffs["spe"] * SPEED_POINTS_PER_LAYER
+    )
 
     attacker_stat = attacker["stats"][attack_key]
     defender_defense = defender["stats"][defense_key]
@@ -317,7 +344,7 @@ def calculate_damage(
     if ignore_type_resistance:
         type_mult = max(1.0, type_mult)
     ability_mult = _ability_multiplier(
-        attack_modifier_percent, defense_modifier_percent
+        total_attack_modifier, total_defense_modifier
     )
     reduction_mult = max(0.0, 1 - damage_reduction_percent / 100)
     final_mult = min(max(float(damage_multiplier_percent), 0), 500) / 100
@@ -363,6 +390,14 @@ def calculate_damage(
         "display_power_raw": display_power_raw,
         "stab": stab,
         "type_multiplier": type_mult,
+        "attacker_buffs": attacker_buffs,
+        "defender_buffs": defender_buffs,
+        "buff_attack_percent": buff_attack_percent,
+        "buff_defense_percent": buff_defense_percent,
+        "total_attack_modifier_percent": total_attack_modifier,
+        "total_defense_modifier_percent": total_defense_modifier,
+        "attacker_speed_after_buffs": attacker_speed_after_buffs,
+        "defender_speed_after_buffs": defender_speed_after_buffs,
         "ability_multiplier": ability_mult,
         "damage_reduction_multiplier": reduction_mult,
         "damage_multiplier": final_mult,
@@ -388,6 +423,8 @@ def calculate_matchup(
     defender_talents=None,
     level=60,
     weather=None,
+    attacker_buffs=None,
+    defender_buffs=None,
     **damage_options,
 ):
     """高层入口：按名称查找双方和技能，算面板后计算伤害。"""
@@ -407,7 +444,13 @@ def calculate_matchup(
     )
     skill = find_skill(skill_name)
     return calculate_damage(
-        attacker, defender, skill, weather=weather, **damage_options
+        attacker,
+        defender,
+        skill,
+        weather=weather,
+        attacker_buffs=attacker_buffs,
+        defender_buffs=defender_buffs,
+        **damage_options,
     )
 
 
@@ -498,6 +541,37 @@ def normalize_talents(talents=None):
 
     if sum(1 for value in result.values() if value > 0) > 3:
         raise TalentError("天分最多只能给三项能力加成。")
+    return result
+
+
+def normalize_buffs(buffs=None):
+    """把增减益层数规范成五项齐全的 {键: -99～99 的整数} 字典。
+
+    支持中文名（物攻/物防/魔攻/魔防/速度）或键名（atk/def/spa/spd/spe）。
+    正数表示增益，负数表示减益；生命没有增减益层数。
+    """
+    result = {key: 0 for key in BUFF_KEYS}
+    if buffs is None:
+        return result
+    if not isinstance(buffs, dict):
+        raise BuffError("增减益必须是字典，例如 {'魔攻': 2, '速度': -1}。")
+
+    for raw_key, raw_value in buffs.items():
+        if raw_key in ("hp", "生命"):
+            raise BuffError("生命没有增减益层数。")
+        key = raw_key if raw_key in BUFF_KEYS else NAME_TO_KEY.get(raw_key)
+        if key is None:
+            raise BuffError(
+                f"未知能力名“{raw_key}”。可用：物攻/物防/魔攻/魔防/速度。"
+            )
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+            raise BuffError(f"{STAT_NAMES[key]}的增减益必须是整数层数。")
+        if not -BUFF_LAYER_LIMIT <= raw_value <= BUFF_LAYER_LIMIT:
+            raise BuffError(
+                f"{STAT_NAMES[key]}的增减益必须在 -{BUFF_LAYER_LIMIT}～"
+                f"{BUFF_LAYER_LIMIT} 层之间。"
+            )
+        result[key] = raw_value
     return result
 
 
