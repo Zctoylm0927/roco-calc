@@ -8,8 +8,9 @@
     浏览器打开 http://127.0.0.1:8000
 
 只监听本机，不安装任何第三方包。提供：
-    GET  /api/meta      精灵、性格、攻击技能列表
-    POST /api/analyze   输入整场状态，返回对方范围和伤害范围
+    GET  /api/meta      精灵、性格、攻击技能和每只精灵的可学习技能
+    POST /api/analyze   单只精灵：返回对方范围和伤害范围
+    POST /api/team      6 对 6：返回每只对方精灵的范围和双方技能表
     GET  /              最小页面 web/index.html
 """
 
@@ -23,6 +24,7 @@ from pathlib import Path
 
 import roco_analysis as ra
 import roco_calc as rc
+import roco_team as rt
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
@@ -40,12 +42,14 @@ MAX_REQUEST_BYTES = 1_000_000
 @lru_cache(maxsize=None)
 def build_meta():
     """整理前端需要的精灵、性格和攻击技能列表。"""
+    learnsets = rc.load_learnsets()
     pets = [
         {
             "name": pet["name"],
             "form": pet["form"],
             "number": pet["number"],
             "types": pet["types"],
+            "skills": list(learnsets.get((pet["name"], pet["form"]), ())),
         }
         for pet in rc.load_pets()
     ]
@@ -84,6 +88,13 @@ def analyze_request(payload):
     if not isinstance(payload, dict):
         raise ra.AnalysisError("请求内容必须是一个 JSON 对象。")
     return ra.analyze_battle(payload)
+
+
+def analyze_team_request(payload):
+    """处理 /api/team 的请求体；出错时抛 roco_calc.RocoCalcError。"""
+    if not isinstance(payload, dict):
+        raise ra.AnalysisError("请求内容必须是一个 JSON 对象。")
+    return rt.analyze_team(payload)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -125,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if path != "/api/analyze":
+        if path not in ("/api/analyze", "/api/team"):
             self._send_json(404, {"error": "找不到这个地址。"})
             return
 
@@ -149,7 +160,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            result = analyze_request(payload)
+            if path == "/api/team":
+                result = analyze_team_request(payload)
+            else:
+                result = analyze_request(payload)
         except rc.RocoCalcError as exc:
             self._send_json(400, {"error": str(exc)})
             return

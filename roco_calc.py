@@ -193,6 +193,26 @@ def load_skills():
 
 
 @lru_cache(maxsize=None)
+def load_learnsets():
+    """读取 data/learnsets.csv，返回 {(精灵名, 形态): 攻击技能名元组}。
+
+    只保留攻击技能，因为伤害计算只用到这一类；技能名去重并排序。
+    """
+    rows = _read_csv("learnsets.csv")
+    table = {}
+    for row in rows:
+        if row.get("category") != "攻击":
+            continue
+        if row.get("damage_class") not in ("物攻", "魔攻"):
+            continue
+        key = (row.get("name", ""), row.get("form", ""))
+        names = table.setdefault(key, set())
+        if row.get("skill_name"):
+            names.add(row["skill_name"])
+    return {key: tuple(sorted(names)) for key, names in table.items()}
+
+
+@lru_cache(maxsize=None)
 def load_type_multipliers():
     """读取 data/type_multipliers.csv，返回 {(防御方组合, 攻击属性): 倍率}。"""
     rows = _read_csv("type_multipliers.csv")
