@@ -228,12 +228,8 @@ def _stat_values(number, form, level, key):
     model = ra._model_for(pet, level)
     values = array("I", [0]) * model.total
     for value, bits in model.value_bits[key].items():
-        remaining = bits
-        while remaining:
-            low = remaining & -remaining
-            index = low.bit_length() - 1
+        for index in _iter_bits(bits):
             values[index] = value
-            remaining ^= low
     return values
 
 
@@ -263,6 +259,7 @@ def _build_opponent_slot(raw, index, level):
         "bits": model.mask,
         "hp_lo": array("I", max_hp_values),
         "hp_hi": array("I", max_hp_values),
+        "hp_touched": False,
         "skills": skills,
         "observed_skills": [],
         "buffs": buffs,
@@ -307,11 +304,20 @@ def _hp_interval(max_hp, percent, mode):
     return low, high
 
 
+# 每个字节里哪些位是 1。逐字节查表比反复操作几万位的大整数快得多。
+_BYTE_BITS = tuple(
+    tuple(offset for offset in range(8) if byte >> offset & 1)
+    for byte in range(256)
+)
+
+
 def _iter_bits(bits):
-    while bits:
-        low = bits & -bits
-        yield low.bit_length() - 1
-        bits ^= low
+    """按编号从小到大列出位图里所有为 1 的候选编号。"""
+    data = bits.to_bytes((bits.bit_length() + 7) // 8, "little")
+    for byte_index, byte in enumerate(data):
+        base = byte_index << 3
+        for offset in _BYTE_BITS[byte]:
+            yield base + offset
 
 
 # ---------------------------------------------------------------------------
@@ -458,9 +464,9 @@ def _filter_opponent_after_damage(
     )
     max_hp_values = _stat_values(pet["number"], pet["form"], level, "hp")
 
-    new_low = {}
-    new_high = {}
-    keep_bits = 0
+    new_low = array("I", opponent["hp_lo"])
+    new_high = array("I", opponent["hp_hi"])
+    keep = bytearray((opponent["model"].total + 7) // 8)
     for index in _iter_bits(damage_bits):
         damage = damage_map[stat_values[index]]
         low = max(0, opponent["hp_lo"][index] - damage)
@@ -472,17 +478,18 @@ def _filter_opponent_after_damage(
             low = max(low, interval[0])
             high = min(high, interval[1])
         if low <= high:
-            keep_bits |= 1 << index
+            keep[index >> 3] |= 1 << (index & 7)
             new_low[index] = low
             new_high[index] = high
 
+    keep_bits = int.from_bytes(keep, "little")
     if keep_bits == 0:
         return None
 
     opponent["bits"] = keep_bits
-    for index, value in new_low.items():
-        opponent["hp_lo"][index] = value
-        opponent["hp_hi"][index] = new_high[index]
+    opponent["hp_lo"] = new_low
+    opponent["hp_hi"] = new_high
+    opponent["hp_touched"] = True
     return keep_bits
 
 
@@ -490,9 +497,9 @@ def _filter_opponent_hp_reset(opponent, percent, delta, rounding, level):
     """重置对方生命；填了实际变化量时，再用变化量筛选候选。"""
     pet = opponent["pet"]
     max_hp_values = _stat_values(pet["number"], pet["form"], level, "hp")
-    new_low = {}
-    new_high = {}
-    keep_bits = 0
+    new_low = array("I", opponent["hp_lo"])
+    new_high = array("I", opponent["hp_hi"])
+    keep = bytearray((opponent["model"].total + 7) // 8)
 
     for index in _iter_bits(opponent["bits"]):
         max_hp = max_hp_values[index]
@@ -505,17 +512,18 @@ def _filter_opponent_hp_reset(opponent, percent, delta, rounding, level):
             low = max(0, opponent["hp_lo"][index] + delta, interval[0])
             high = min(max_hp, opponent["hp_hi"][index] + delta, interval[1])
         if low <= high:
-            keep_bits |= 1 << index
+            keep[index >> 3] |= 1 << (index & 7)
             new_low[index] = low
             new_high[index] = high
 
+    keep_bits = int.from_bytes(keep, "little")
     if keep_bits == 0:
         return None
 
     opponent["bits"] = keep_bits
-    for index, value in new_low.items():
-        opponent["hp_lo"][index] = value
-        opponent["hp_hi"][index] = new_high[index]
+    opponent["hp_lo"] = new_low
+    opponent["hp_hi"] = new_high
+    opponent["hp_touched"] = True
     return keep_bits
 
 
@@ -831,7 +839,36 @@ def _skill_base(skill):
     }
 
 
-def _our_skill_range(our, opponent, entry, state, state_options):
+def _opponent_skill_groups(opponent, level):
+    """把候选按「最大生命、防御、当前生命上下界」合并。
+
+    技能伤害只取决于物防或魔防；剩余生命百分比还取决于最大生命和当前
+    生命。同一组里这些值完全相同，因此每组只算一次即可，不需要让
+    46,320 个候选分别乘以技能数量。
+    """
+    pet = opponent["pet"]
+    hp_values = _stat_values(pet["number"], pet["form"], level, "hp")
+    def_values = _stat_values(pet["number"], pet["form"], level, "def")
+    spd_values = _stat_values(pet["number"], pet["form"], level, "spd")
+    hp_low = opponent["hp_lo"]
+    hp_high = opponent["hp_hi"]
+    groups = {"def": {}, "spd": {}}
+
+    for index in _iter_bits(opponent["bits"]):
+        max_hp = hp_values[index]
+        low = hp_low[index]
+        high = hp_high[index]
+        key = (max_hp, def_values[index], low, high)
+        bucket = groups["def"]
+        bucket[key] = bucket.get(key, 0) + 1
+        key = (max_hp, spd_values[index], low, high)
+        bucket = groups["spd"]
+        bucket[key] = bucket.get(key, 0) + 1
+
+    return groups
+
+
+def _our_skill_range(our, opponent, entry, state, state_options, groups):
     try:
         skill = rc.find_skill(entry["name"])
     except rc.RocoCalcError as exc:
@@ -874,14 +911,6 @@ def _our_skill_range(our, opponent, entry, state, state_options):
         options,
     )
 
-    pet = opponent["pet"]
-    defense_values = _stat_values(
-        pet["number"], pet["form"], state["level"], defense_key
-    )
-    max_hp_values = _stat_values(
-        pet["number"], pet["form"], state["level"], "hp"
-    )
-
     damage_min = min(damage_by_value.values())
     damage_max = max(damage_by_value.values())
     remaining_min = math.inf
@@ -892,11 +921,12 @@ def _our_skill_range(our, opponent, entry, state, state_options):
     impossible = 0
     total = 0
 
-    for index in _iter_bits(opponent["bits"]):
-        max_hp = max_hp_values[index]
-        damage = damage_by_value[defense_values[index]]
-        remaining_low = max(0, opponent["hp_lo"][index] - damage)
-        remaining_high = max(0, opponent["hp_hi"][index] - damage)
+    for (max_hp, defense, hp_low, hp_high), count in groups[
+        defense_key
+    ].items():
+        damage = damage_by_value[defense]
+        remaining_low = max(0, hp_low - damage)
+        remaining_high = max(0, hp_high - damage)
         remaining_min = min(remaining_min, remaining_low / max_hp * 100)
         remaining_max = max(remaining_max, remaining_high / max_hp * 100)
         damage_percent_min = min(
@@ -905,11 +935,11 @@ def _our_skill_range(our, opponent, entry, state, state_options):
         damage_percent_max = max(
             damage_percent_max, damage / max_hp * 100
         )
-        if remaining_high == 0:
-            certain += 1
-        elif remaining_low > 0:
-            impossible += 1
-        total += 1
+        if hp_high <= damage:
+            certain += count
+        elif hp_low > damage:
+            impossible += count
+        total += count
 
     if certain == total:
         knockout = "certain"
@@ -1015,11 +1045,14 @@ def _active_result(state, state_options, our_slots, opp_slots):
     if our is None or opponent is None:
         return None
 
+    groups = _opponent_skill_groups(opponent, state["level"])
     return {
         "our_slot": our_slot,
         "opponent_slot": opp_slot,
         "our_skills": [
-            _our_skill_range(our, opponent, entry, state, state_options)
+            _our_skill_range(
+                our, opponent, entry, state, state_options, groups
+            )
             for entry in our["skills"]
         ],
         "opponent_skills": [
@@ -1079,6 +1112,14 @@ def _opponent_summary(opponent, rounding):
         summary["current_hp_percent"] = None
         return summary
 
+    if not opponent.get("hp_touched"):
+        summary["current_hp"] = {
+            "min": summary["stats"]["hp"]["min"],
+            "max": summary["stats"]["hp"]["max"],
+        }
+        summary["current_hp_percent"] = {"min": 100, "max": 100}
+        return summary
+
     pet = opponent["pet"]
     max_hp_values = _stat_values(
         pet["number"], pet["form"], opponent["model"].level, "hp"
@@ -1087,22 +1128,24 @@ def _opponent_summary(opponent, rounding):
     hp_high = -math.inf
     percent_low = math.inf
     percent_high = -math.inf
+    percent_cache = {}
+
+    def display_percent(value, max_hp):
+        key = (max_hp, value)
+        cached = percent_cache.get(key)
+        if cached is None:
+            cached = ra._rounded_percent(value, max_hp, rounding)
+            percent_cache[key] = cached
+        return cached
+
     for index in _iter_bits(opponent["bits"]):
         max_hp = max_hp_values[index]
-        hp_low = min(hp_low, opponent["hp_lo"][index])
-        hp_high = max(hp_high, opponent["hp_hi"][index])
-        percent_low = min(
-            percent_low,
-            ra._rounded_percent(
-                opponent["hp_lo"][index], max_hp, rounding
-            ),
-        )
-        percent_high = max(
-            percent_high,
-            ra._rounded_percent(
-                opponent["hp_hi"][index], max_hp, rounding
-            ),
-        )
+        low = opponent["hp_lo"][index]
+        high = opponent["hp_hi"][index]
+        hp_low = min(hp_low, low)
+        hp_high = max(hp_high, high)
+        percent_low = min(percent_low, display_percent(low, max_hp))
+        percent_high = max(percent_high, display_percent(high, max_hp))
     summary["current_hp"] = {"min": hp_low, "max": hp_high}
     summary["current_hp_percent"] = {
         "min": round(percent_low, 1),
