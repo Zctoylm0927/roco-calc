@@ -3,13 +3,14 @@
 """
 洛克王国世界（roco）伤害计算核心库
 
-本文件目前实现「面板值」计算：
-    种族值 + 天分 + 性格 + 等级  →  战斗中的实际六维
+包含两部分：
+    1. 面板值：种族值 + 天分 + 性格 + 等级  →  战斗中的实际六维
+    2. 伤害：双方面板 + 技能 + 属性克制 + 本系加成  →  伤害
 
 公式来源与取整口径见 docs/architecture.md。当前以 rocopvp.tzrain.wiki
 的计算器为准（用户指定的参考实现），并已用公开文章中的实例校验。
 
-后续会在此基础上加入技能、属性克制与伤害计算。
+命令行入口见 calc.py。
 """
 
 from __future__ import annotations
@@ -379,13 +380,15 @@ def calculate_matchup(
 def _split_name_form(text, form=None):
     """支持「岚鸟(本来的样子)」或「岚鸟（本来的样子）」写法。"""
     name = str(text).strip()
-    if form is not None:
-        return name, str(form).strip()
+    embedded_form = None
     for left, right in (("(", ")"), ("（", "）")):
         if name.endswith(right) and left in name:
             idx = name.rfind(left)
-            return name[:idx].strip(), name[idx + 1:-1].strip()
-    return name, None
+            name, embedded_form = name[:idx].strip(), name[idx + 1:-1].strip()
+            break
+    if form is None:
+        form = embedded_form
+    return name, (str(form).strip() if form is not None else None)
 
 
 def find_pet(name, form=None):
@@ -401,10 +404,10 @@ def find_pet(name, form=None):
         raise PetNotFoundError(f"找不到精灵“{name}”。")
 
     if form is not None:
+        all_matches = matches
         matches = [p for p in matches if p["form"] == form]
         if not matches:
-            forms = sorted({p["form"] or "（基础形态）" for p in
-                            (x for x in load_pets() if x["name"] == name or x["number"] == name)})
+            forms = sorted({p["form"] or "（基础形态）" for p in all_matches})
             raise PetNotFoundError(
                 f"精灵“{name}”没有形态“{form}”。可选形态：" + "、".join(forms)
             )

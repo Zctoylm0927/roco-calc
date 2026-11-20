@@ -26,6 +26,10 @@ class TestPetLookup(unittest.TestCase):
         pet = rc.find_pet("岚鸟（春天的样子）")
         self.assertEqual(pet["form"], "春天的样子")
 
+    def test_parentheses_and_form_argument_together(self):
+        pet = rc.find_pet("岚鸟（春天的样子）", "春天的样子")
+        self.assertEqual(pet["form"], "春天的样子")
+
     def test_ambiguous_name_requires_form(self):
         with self.assertRaises(rc.AmbiguousPetError) as ctx:
             rc.find_pet("岚鸟")
@@ -292,6 +296,29 @@ class TestDamageFormula(unittest.TestCase):
         import json
         result = self._article_case()
         json.dumps(result, ensure_ascii=False)
+
+
+class TestCli(unittest.TestCase):
+    def test_parse_talents(self):
+        import calc
+        self.assertEqual(
+            calc.parse_talents("物攻=10,速度=3"),
+            {"物攻": 10, "速度": 3},
+        )
+
+    def test_format_result(self):
+        import calc
+        result = rc.calculate_matchup(
+            "岚鸟", "奇丽花", "扇风",
+            attacker_form="本来的样子",
+            attacker_talents={"atk": 10},
+            defender_talents={"def": 10},
+            power=142.5,
+        )
+        text = calc.format_result(result)
+        self.assertIn("显示威力：356", text)
+        self.assertIn("总伤害：332", text)
+        self.assertIn("不能击倒", text)
 
 
 if __name__ == "__main__":

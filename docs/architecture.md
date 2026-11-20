@@ -13,9 +13,11 @@
 |------|------|
 | `Module:Pets/data/Catalog` | 精灵基础数据：编号、名称、种族值、属性、阶段、形态、进化链 ID |
 | `Module:Pets/data/Evolutions` | 进化链：主进化线（chain）+ 领主化分支（lord_branches） |
-| `Module:Pets/data/Skills` | 技能数据（本步未用，可复用） |
-| `Module:Pets/data/Learnsets` | 可学技能（本步未用） |
-| `Module:Pets/data/Types` | 属性（后续伤害计算用） |
+| `Module:Pets/data/Skills` | 技能数据（技能名、类别、属性、物攻/魔攻、威力、能耗、描述） |
+| `Module:Pets/data/Learnsets` | 可学技能（尚未使用） |
+| `Module:Pets/data/Types` | 属性克制数据 |
+| `Module:Natures/data` | 性格数据（30 种性格的提升/降低项） |
+| `Module:Pets/data/TrainingReference` | 养成参考（用于交叉核对性格语义） |
 
 ## 获取方式
 
@@ -29,10 +31,12 @@ GET /api.php?action=parse&page=Module:Pets/data/Catalog&prop=wikitext&format=jso
 
 ```
 api.php (wikitext)  →  LuaParser（递归下降解析 Lua 表）
-                          ├─ Catalog → 精灵基础数据
-                          └─ Evolutions → 进化链
-                          →  关联（通过 evolution_id）
-                          →  data/pets.csv
+                          ├─ Catalog + Evolutions → 关联（通过 evolution_id）→ data/pets.csv
+                          ├─ Types                → data/type_relations.csv / data/type_multipliers.csv
+                          ├─ Skills               → data/skills.csv
+                          └─ Natures/data         → data/natures.csv
+
+data/*.csv  →  roco_calc.py（查询 + 面板 + 伤害）  →  calc.py（命令行 / JSON）
 ```
 
 ## Lua 表结构
@@ -164,3 +168,250 @@ evolution_bf682d603e12 = {
 - 克制关系：攻略 49 组，wiki 50 组，唯一差异是「草系→光系」——攻略草系条目漏写，wiki 确认草克制光。
 
 故最终改用 wiki `Types` 模块为权威数据源。
+
+## 技能与性格数据（第三步）
+
+### Skills 模块
+
+数据来源：`Module:Pets/data/Skills`，输出 `data/skills.csv`。
+
+模块结构（每个技能一个条目）：
+
+```lua
+skill_000688 = {
+  category = "攻击",          -- 攻击 / 状态 / 防御 / 特性
+  damage_class = "物攻",      -- 物攻 / 魔攻（仅攻击技能）
+  element = "翼系",
+  power = 75,
+  energy = 3,
+  name = "扇风",
+  desc = "造成物伤，若先于敌方攻击，本次技能威力+50%。",
+  game_id = 7150060,
+}
+```
+
+输出字段：
+
+| 字段 | 含义 |
+|------|------|
+| `skill_id` | 模块内键名，如 `skill_000688` |
+| `game_id` | 游戏内技能 ID |
+| `name` | 技能中文名 |
+| `category` | 攻击 / 状态 / 防御 / 特性 |
+| `element` | 技能属性；状态/特性类可能为 `无系别` |
+| `damage_class` | 物攻 / 魔攻（仅攻击技能） |
+| `power` | 基础威力（仅攻击技能） |
+| `energy` | 能耗 |
+| `power_text` | 威力备注（如 `变化`） |
+| `desc` | 技能描述 |
+
+当前数据共 **825 个技能**，其中 **358 个攻击技能**。攻击技能名唯一；重名只出现在「特性」类里。
+
+> 少数技能的威力随规则变化（如魔能爆、怨力打击、砂糖弹球），数据里的 `power` 可能是 1 或固定档位。计算这类技能时需要用 `--power` 手动指定实际威力。
+
+### Natures 模块
+
+数据来源：`Module:Natures/data`，输出 `data/natures.csv`。
+
+模块结构：
+
+```lua
+{ stats = { {id=80,name="物攻"}, {id=82,name="物防"}, ... },
+  rows  = { {id=1, name="大胆", up=80, down=82}, ... } }
+```
+
+- 30 种性格，每种都是「一项提升、一项降低」。
+- 能力编号映射由模块自带的 `stats` 表给出：`79=生命`、`80=物攻`、`81=魔攻`、`82=物防`、`83=魔防`、`84=速度`。
+- 已用 `Module:Pets/data/TrainingReference` 的 `labels.nature` 逐条核对，30 条完全一致。
+
+> 注意：洛克的性格语义和宝可梦不完全一样。例如洛克的「大胆」是 **物攻↑ / 物防↓**，不是宝可梦的「防御↑ / 攻击↓」。
+
+## 面板值公式（第四步）
+
+默认按 **60 级 PVP** 计算，可用 `--level` 改等级。
+
+记：
+
+- `B`：该项种族值
+- `T`：该项天分（0–10）
+- `L`：等级
+- `N`：性格乘区（提升项 1.2，降低项 0.9，其余 1.0）
+
+### 非生命
+
+```text
+内层 = 内层取整((L/100 + 0.5) × (B + 3T))
+面板 = round((内层 + 10) × N) + 50
+```
+
+### 生命
+
+```text
+内层 = 内层取整((L/50 + 0.5) × (B + 3T))
+面板 = round((内层 + L + 10) × N) + 100
+```
+
+### 取整规则
+
+- `round` 模拟 JavaScript 的 `Math.round`：恰好 .5 时向正无穷方向进一位（不是 Python 默认的「半到偶数」）。
+- `内层取整` 在 **天分 T = 0 且数值恰好是 .5** 时使用「半到奇数」：整数部分是偶数就进一位，是奇数就保留；其余情况用普通四舍五入。
+- 这个细节只在极端边界上差 1 点，但为了和参考计算器完全一致，照原样实现。
+
+### 校验
+
+- 岚鸟物攻种族 128、天分 10 → 物攻面板 **234**。
+- 奇丽花物防种族 121、天分 10 → 物防面板 **226**。
+- 这两组数字来自公开文章，和本实现一致。
+
+### 取整口径的选择
+
+三个社区计算器的面板公式在「什么时候取整」上不完全一样：
+
+- tzrain（用户指定参考）：先对内层取整，再乘性格，再取整。
+- rocokingdom：整个括号算完后只取整一次。
+- roco.pet：先取整，再乘性格，但天分记法不同（0–60，约等于 6 倍天分）。
+
+在性格不是「不加不减」时，tzrain 和 rocokingdom 约有 18% 的数值会差 1 点。本项目 **以 tzrain 为准**，因为它是用户指定的参考实现；如果以后拿到游戏内实测面板，可以用实测值再校准。
+
+## 伤害公式（第五步）
+
+记：
+
+- `BP`：技能基础威力（可用 `--power` 覆盖）
+- `flat`：固定威力加成
+- `power_pct`：威力百分比加成
+- `damage_flat`：只影响伤害的固定威力加成
+- `damage_pct`：只影响伤害的威力百分比加成
+- `STAB`：本系加成，技能属性在攻击方属性里为 1.25，否则 1.0
+- `type`：属性克制倍率，查 `data/type_multipliers.csv`，未命中为 1.0
+- `misc`：其他乘区，默认 1.0
+- `stage`：攻防等级乘区，默认 1.0
+- `reduction`：减伤乘区，默认 1.0
+- `final`：最终伤害乘区，默认 1.0（百分比 100，范围 0–500）
+
+### 计算顺序
+
+```text
+有效威力 = max(0, (BP + flat) × (1 + power_pct/100))
+伤害威力 = max(0, (有效威力 + damage_flat) × (1 + damage_pct/100))
+
+显示威力 = round(伤害威力 × STAB × type × misc × stage)
+
+等级系数 = (45 × L/100 + 10) / 41        # 60 级 = 37/41
+
+单次伤害 = floor(
+    round(攻击面板 × 显示威力 × reduction × 等级系数) / 防御面板
+)
+
+总伤害 = floor(单次伤害 × 连击次数 × final)
+```
+
+### 攻防等级乘区
+
+`attack_mod` 和 `defense_mod` 是百分比（例如 `--attack-mod 50` 表示增攻 50%，`--defense-mod -50` 表示减防 50%）：
+
+```text
+分子 = 1 + max(attack_mod, 0)/100 + max(-defense_mod, 0)/100
+分母 = 1 + max(-attack_mod, 0)/100 + max(defense_mod, 0)/100
+stage = 分子 / 分母
+```
+
+### 属性克制
+
+- 单克制 ×2，双克制 ×3；单抵抗 ×0.5，双抵抗 ×0.25；一克一抗 ×1；无关系 ×1。
+- 双属性组合的键名顺序由 `crawl_type_chart.py` 决定；`roco_calc.type_multiplier()` 会按同样顺序规范化。
+- 已用 tzrain 内置的 18×18 属性表逐条比对：`data/type_multipliers.csv` 的 1023 条全部一致。
+
+### 校验
+
+公开文章实例：
+
+```text
+岚鸟（物攻 128，天分 10）→ 物攻面板 234
+奇丽花（物防 121，天分 10）→ 物防面板 226
+扇风（翼系，物攻，有效威力 142.5）
+本系 ×1.25，打草系 ×2
+显示威力 = round(142.5 × 1.25 × 2) = 356
+单次伤害 = floor(round(234 × 356 × 37/41) / 226) = 332
+```
+
+本实现输出的显示威力和伤害分别是 **356 / 332**，与文章一致。
+
+### 没有暴击和随机浮动
+
+参考实现和公开资料中，PVP 伤害公式没有暴击乘区和随机浮动。本实现也不加入这两个因素。
+
+## 代码结构
+
+| 文件 | 作用 |
+|------|------|
+| `crawl_pets.py` | 精灵基础数据爬取 + 通用 Lua 解析器 |
+| `crawl_type_chart.py` | 属性克制表爬取 |
+| `crawl_skills.py` | 技能表爬取 |
+| `crawl_natures.py` | 性格表爬取 |
+| `roco_calc.py` | 核心库：数据加载、精灵/技能查询、面板值、属性倍率、伤害 |
+| `calc.py` | 命令行入口（中文输出，支持 `--json`） |
+| `tests/test_roco_calc.py` | 单元测试 |
+
+数据文件：
+
+- `data/pets.csv`
+- `data/type_relations.csv`
+- `data/type_multipliers.csv`
+- `data/skills.csv`
+- `data/natures.csv`
+
+## 命令行用法（第六步）
+
+基本用法：
+
+```bash
+python calc.py \
+  --attacker 岚鸟 --attacker-form 本来的样子 \
+  --defender 奇丽花 --skill 扇风 \
+  --attacker-talents "物攻=10" --defender-talents "物防=10" \
+  --power 142.5
+```
+
+带性格：
+
+```bash
+python calc.py \
+  --attacker 岚鸟 --attacker-form 本来的样子 --attacker-nature 固执 \
+  --defender 奇丽花 --skill 扇风 \
+  --attacker-talents "物攻=10" --defender-talents "物防=10"
+```
+
+输出 JSON（便于以后前端直接调用）：
+
+```bash
+python calc.py \
+  --attacker 岚鸟 --attacker-form 本来的样子 \
+  --defender 奇丽花 --skill 扇风 --json
+```
+
+常用可选参数：
+
+| 参数 | 含义 |
+|------|------|
+| `--level` | 等级，默认 60 |
+| `--power` | 手动指定基础威力 |
+| `--power-percent` | 威力百分比加成 |
+| `--attack-mod` / `--defense-mod` | 攻防等级百分比 |
+| `--damage-reduction` | 减伤百分比 |
+| `--damage-multiplier` | 最终伤害乘区百分比，默认 100 |
+| `--hits` | 连击次数，默认 1 |
+| `--ignore-type-resistance` | 忽略属性抵抗 |
+| `--json` | 输出完整 JSON |
+
+## 已知限制
+
+- 不包含特性、道具、天气、场地、印记等额外效果。
+- 不包含暴击和随机浮动（参考公式里没有）。
+- 不校验精灵是否真的能学这个技能（未接入 `Learnsets`）。
+- 不计算速度先后、先手、换人等战斗流程。
+- 不包含成长星级/PVE 数值；默认按 60 级 PVP 面板。
+- 威力随规则变化的技能需要手动 `--power`；数据里的 1 不代表真实威力。
+- 状态/防御/特性类技能不套用伤害公式，会直接报错。
+- 取整口径以 tzrain 为准；与 rocokingdom 等计算器可能有 ±1 差异。
+- 性格默认「不加不减」、天分默认全 0，避免隐藏假设；实际游戏里需要显式传入。
