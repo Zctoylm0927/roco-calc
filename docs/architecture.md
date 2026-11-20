@@ -14,7 +14,7 @@
 | `Module:Pets/data/Catalog` | 精灵基础数据：编号、名称、种族值、属性、阶段、形态、进化链 ID |
 | `Module:Pets/data/Evolutions` | 进化链：主进化线（chain）+ 领主化分支（lord_branches） |
 | `Module:Pets/data/Skills` | 技能数据（技能名、类别、属性、物攻/魔攻、威力、能耗、描述） |
-| `Module:Pets/data/Learnsets` | 可学技能（尚未使用） |
+| `Module:Pets/data/Learnsets` | 每只精灵的可学习技能（升级、血脉、技能石、特性技能） |
 | `Module:Pets/data/Types` | 属性克制数据 |
 | `Module:Natures/data` | 性格数据（30 种性格的提升/降低项） |
 | `Module:Pets/data/TrainingReference` | 养成参考（用于交叉核对性格语义） |
@@ -34,6 +34,7 @@ api.php (wikitext)  →  LuaParser（递归下降解析 Lua 表）
                           ├─ Catalog + Evolutions → 关联（通过 evolution_id）→ data/pets.csv
                           ├─ Types                → data/type_relations.csv / data/type_multipliers.csv
                           ├─ Skills               → data/skills.csv
+                          ├─ Learnsets + Catalog  → data/learnsets.csv（按精灵展开）
                           └─ Natures/data         → data/natures.csv
 
 data/*.csv  →  roco_calc.py（查询 + 面板 + 伤害）  →  calc.py（命令行 / JSON）
@@ -225,6 +226,42 @@ skill_000688 = {
 - 已用 `Module:Pets/data/TrainingReference` 的 `labels.nature` 逐条核对，30 条完全一致。
 
 > 注意：洛克的性格语义和宝可梦不完全一样。例如洛克的「大胆」是 **物攻↑ / 物防↓**，不是宝可梦的「防御↑ / 攻击↓」。
+
+## 可学习技能表（第十四步）
+
+数据来源：`Module:Pets/data/Learnsets`（学习表）+ `Module:Pets/data/Catalog`（把学习表挂到精灵上），输出 `data/learnsets.csv`。
+
+模块结构（每只精灵或每个形态一个学习表）：
+
+```lua
+learnset_xxxx = {
+  native_skills = { {level=8, skill="skill_000001", stage=1}, ... },  -- 升级学习
+  blood_skills  = { {blood="水", level=15, skill="skill_000002"}, ... }, -- 血脉技能
+  skill_stones  = { "skill_000003", ... },                              -- 技能石
+  feature_skill = "skill_000004",                                       -- 自带特性技能
+}
+```
+
+输出是「一只精灵 + 一个技能」一行，同一技能来自多个来源时合并成一行：
+
+| 字段 | 含义 |
+|------|------|
+| `pet_id` | Catalog 内的精灵 ID |
+| `number` / `name` / `form` / `stage` | 与 `data/pets.csv` 相同的精灵标识 |
+| `skill_id` / `skill_name` | 技能 ID 和中文名 |
+| `category` / `element` / `damage_class` / `power` | 从 `data/skills.csv` 带过来的技能信息 |
+| `sources` | 学习来源，多个用竖线分隔：`native` 升级、`blood` 血脉、`stone` 技能石、`feature` 特性技能 |
+| `level` | 升级/血脉学习的最低等级；技能石和特性技能为空 |
+| `blood` | 血脉技能对应的属性，多个用竖线分隔 |
+
+匹配方式：先按「编号 + 名称 + 形态 + 阶段」精确匹配；老数据的形态名可能变化，再退到「编号 + 名称 + 阶段」，但要求候选条目的学习表完全相同，避免把不同形态的技能混在一起。所有 621 只精灵都匹配成功。
+
+当前数据共 **31,347 行**，覆盖 **817 个不同技能**，其中攻击技能 **16,715 行**。每只精灵的攻击技能最少 9 个、最多 281 个（学院呱呱有大量技能石）。升级学习的最低等级都 ≤51，所以 60 级 PVP 下全部可用。
+
+已知缺口：
+
+- 27 个 `dc5a_*` 技能 ID 在 `data/skills.csv` 里找不到（共 201 条引用，全部来自技能石），已跳过；等技能表更新后再重跑。
+- Catalog 有 12 个条目不在 `data/pets.csv` 里（云梦豚、长江豚，以及护主犬/音速犬等的新形态），本表没有写入；需要先更新精灵表。
 
 ## 面板值公式（第四步）
 
@@ -526,6 +563,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `crawl_type_chart.py` | 属性克制表爬取 |
 | `crawl_skills.py` | 技能表爬取 |
 | `crawl_natures.py` | 性格表爬取 |
+| `crawl_learnsets.py` | 可学习技能表爬取（按精灵展开、合并学习来源） |
 | `roco_calc.py` | 核心库：数据加载、精灵/技能查询、面板值、属性倍率、伤害 |
 | `roco_analysis.py` | 范围推断：对方 46,320 种候选、记录过滤、可能性格 |
 | `calc.py` | 伤害命令行入口（中文输出，支持 `--json`） |
@@ -537,6 +575,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `tests/test_roco_calc.py` | 面板/伤害/增减益/星陨的单元测试 |
 | `tests/test_roco_analysis.py` | 范围推断的单元测试 |
 | `tests/test_server.py` | 网页接口和静态页面的测试 |
+| `tests/test_learnsets.py` | 学习表解析、匹配和生成数据的测试 |
 
 数据文件：
 
@@ -545,6 +584,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 - `data/type_multipliers.csv`
 - `data/skills.csv`
 - `data/natures.csv`
+- `data/learnsets.csv`
 
 ## 命令行用法（第六步）
 
