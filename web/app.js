@@ -10,6 +10,8 @@ const STAT_NAMES = {
 };
 
 const STAT_ORDER = ["hp", "atk", "def", "spa", "spd", "spe"];
+const BUFF_KEYS = ["atk", "def", "spa", "spd", "spe"];
+const TALENT_VALUES = [0, 7, 8, 9, 10];
 
 const KNOCKOUT_TEXT = {
   certain: "一定击倒",
@@ -18,6 +20,20 @@ const KNOCKOUT_TEXT = {
 };
 
 let meta = null;
+let requestId = 0;
+let calcTimer = null;
+
+const state = {
+  ourPetIndex: 0,
+  oppPetIndex: 0,
+  nature: "",
+  talents: { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+  ourBuffs: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+  oppBuffs: { atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+  skill: "",
+  weather: "",
+  starfall: 0,
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -42,7 +58,12 @@ function petLabel(pet) {
   return pet.form ? `${pet.name}（${pet.form}）` : pet.name;
 }
 
-function fillPets(select) {
+function findPetIndex(name) {
+  const index = meta.pets.findIndex((pet) => pet.name === name && !pet.form);
+  return index >= 0 ? index : 0;
+}
+
+function fillPets(select, selectedIndex) {
   select.replaceChildren();
   meta.pets.forEach((pet, index) => {
     const option = document.createElement("option");
@@ -50,6 +71,7 @@ function fillPets(select) {
     option.textContent = petLabel(pet);
     select.append(option);
   });
+  select.value = String(selectedIndex);
 }
 
 function fillNatures(select) {
@@ -64,28 +86,99 @@ function fillNatures(select) {
     option.textContent = `${nature.name}（↑${nature.up_name} ↓${nature.down_name}）`;
     select.append(option);
   }
+  select.value = state.nature;
 }
 
-function fillTalents(select) {
-  select.replaceChildren();
-  for (const value of [0, 7, 8, 9, 10]) {
-    const option = document.createElement("option");
-    option.value = String(value);
-    option.textContent = value === 0 ? "0（无加成）" : String(value);
-    select.append(option);
+function buildTalentControls() {
+  const box = $("our-talents");
+  box.replaceChildren();
+  for (const key of STAT_ORDER) {
+    const label = document.createElement("label");
+    label.append(document.createTextNode(STAT_NAMES[key]));
+    const select = document.createElement("select");
+    for (const value of TALENT_VALUES) {
+      const option = document.createElement("option");
+      option.value = String(value);
+      option.textContent = value === 0 ? "0" : String(value);
+      select.append(option);
+    }
+    select.value = String(state.talents[key]);
+    select.addEventListener("change", () => {
+      state.talents[key] = Number(select.value);
+      scheduleCalculate();
+    });
+    label.append(select);
+    box.append(label);
   }
 }
 
-function fillSkills(select) {
+function buildBuffControls(side) {
+  const box = $(side === "our" ? "our-buffs" : "opp-buffs");
+  const values = side === "our" ? state.ourBuffs : state.oppBuffs;
+  box.replaceChildren();
+
+  for (const key of BUFF_KEYS) {
+    const row = element("div", "buff");
+    const label = element("span", "", STAT_NAMES[key]);
+    const minus = element("button", "", "−");
+    const value = element("span", "value", "0");
+    const plus = element("button", "", "＋");
+    minus.type = "button";
+    plus.type = "button";
+
+    const update = () => {
+      const current = values[key];
+      value.textContent = current > 0 ? `+${current}` : String(current);
+      value.className =
+        "value" +
+        (current > 0 ? " positive" : current < 0 ? " negative" : "");
+    };
+    minus.addEventListener("click", () => {
+      values[key] = Math.max(-99, values[key] - 1);
+      update();
+      scheduleCalculate();
+    });
+    plus.addEventListener("click", () => {
+      values[key] = Math.min(99, values[key] + 1);
+      update();
+      scheduleCalculate();
+    });
+
+    update();
+    row.append(label, minus, value, plus);
+    box.append(row);
+  }
+}
+
+function skillMatches(skill, filter) {
+  if (!filter) {
+    return true;
+  }
+  return (
+    skill.name.includes(filter) ||
+    skill.element.includes(filter) ||
+    skill.damage_class.includes(filter)
+  );
+}
+
+function fillSkills(filterText) {
+  const select = $("skill");
+  const filter = filterText.trim();
   select.replaceChildren();
+
   const groups = new Map();
   for (const skill of meta.skills) {
+    if (!skillMatches(skill, filter)) {
+      continue;
+    }
     if (!groups.has(skill.element)) {
       groups.set(skill.element, []);
     }
     groups.get(skill.element).push(skill);
   }
-  const elements = [...groups.keys()].sort((a, b) => a.localeCompare(b, "zh-CN"));
+  const elements = [...groups.keys()].sort((a, b) =>
+    a.localeCompare(b, "zh-CN")
+  );
   for (const elementName of elements) {
     const group = document.createElement("optgroup");
     group.label = elementName;
@@ -97,56 +190,181 @@ function fillSkills(select) {
     }
     select.append(group);
   }
+
+  if ([...select.options].some((option) => option.value === state.skill)) {
+    select.value = state.skill;
+  } else if (select.options.length > 0) {
+    state.skill = select.options[0].value;
+    select.value = state.skill;
+  } else {
+    state.skill = "";
+  }
+  updateSkillInfo();
 }
 
-function selectValue(select, value) {
-  const option = [...select.options].find((item) => item.value === value);
-  if (option) {
-    select.value = value;
+function updateSkillInfo() {
+  const skill = meta.skills.find((item) => item.name === state.skill);
+  const info = $("skill-info");
+  if (!skill) {
+    info.textContent = "没有找到符合筛选条件的技能。";
+    return;
+  }
+  info.textContent =
+    `${skill.name} · ${skill.element} · ${skill.damage_class} · ` +
+    `威力 ${skill.power}` +
+    (skill.energy === null ? "" : ` · 能耗 ${skill.energy}`);
+}
+
+function activeTalents() {
+  const result = {};
+  for (const key of STAT_ORDER) {
+    if (state.talents[key]) {
+      result[key] = state.talents[key];
+    }
+  }
+  return result;
+}
+
+function scheduleCalculate() {
+  clearTimeout(calcTimer);
+  calcTimer = setTimeout(calculate, 200);
+}
+
+function setStatus(text, isError) {
+  const status = $("status");
+  status.textContent = text;
+  status.className = isError ? "status error" : "status";
+}
+
+function validateState() {
+  const nonzero = STAT_ORDER.filter((key) => state.talents[key] > 0);
+  if (nonzero.length > 3) {
+    return "我方天分最多只能给三项能力加成，请去掉一项。";
+  }
+  if (!state.skill) {
+    return "请选择一个技能。";
+  }
+  if (
+    !Number.isInteger(state.starfall) ||
+    state.starfall < 0 ||
+    state.starfall > 99
+  ) {
+    return "星陨层数必须是 0～99 的整数。";
+  }
+  return null;
+}
+
+async function calculate() {
+  if (!meta) {
+    return;
+  }
+  const problem = validateState();
+  if (problem) {
+    setStatus(problem, true);
+    return;
+  }
+
+  const our = meta.pets[state.ourPetIndex];
+  const opponent = meta.pets[state.oppPetIndex];
+  const payload = {
+    our_pet: {
+      name: our.name,
+      form: our.form || null,
+      nature: state.nature || null,
+      talents: activeTalents(),
+      buffs: state.ourBuffs,
+    },
+    opponent_pet: {
+      name: opponent.name,
+      form: opponent.form || null,
+      buffs: state.oppBuffs,
+    },
+    skill: state.skill,
+    weather: state.weather || null,
+    starfall_layers: state.starfall,
+    observations: [],
+  };
+
+  const id = ++requestId;
+  setStatus("计算中…");
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (id !== requestId) {
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(data.error || "计算失败。");
+    }
+    renderOur(data.our);
+    renderOpponent(data.opponent);
+    renderDamage(data.damage, data.opponent);
+    setStatus("");
+  } catch (error) {
+    if (id !== requestId) {
+      return;
+    }
+    setStatus(error.message || "计算失败，请看 server.py 窗口。", true);
   }
 }
 
-function selectPet(select, name) {
-  const index = meta.pets.findIndex((pet) => pet.name === name && !pet.form);
-  if (index >= 0) {
-    select.value = String(index);
+function renderOur(our) {
+  const list = $("our-stats");
+  list.replaceChildren();
+  for (const key of STAT_ORDER) {
+    const row = document.createElement("li");
+    row.append(
+      element("span", "", STAT_NAMES[key]),
+      element("b", "", String(our.stats[key]))
+    );
+    if (key === "spe" && our.buffs.spe) {
+      row.append(
+        element("small", "values", `增减益后 ${our.speed_after_buffs}`)
+      );
+    }
+    list.append(row);
   }
 }
 
-async function loadMeta() {
-  const response = await fetch("/api/meta");
-  if (!response.ok) {
-    throw new Error("读取精灵数据失败，请确认 server.py 还在运行。");
+function renderOpponent(opponent) {
+  const list = $("opp-stats");
+  list.replaceChildren();
+  for (const key of STAT_ORDER) {
+    const item = opponent.stats[key];
+    const values = item.possible_values;
+    const text = item.min === item.max ? String(item.min) : `${item.min} ～ ${item.max}`;
+    const row = document.createElement("li");
+    const detail = element("small", "values", `${values.length} 种`);
+    detail.title = values.join("、");
+    row.append(
+      element("span", "", STAT_NAMES[key]),
+      element("b", "", text),
+      detail
+    );
+    list.append(row);
   }
-  meta = await response.json();
 
-  fillPets($("our-pet"));
-  fillPets($("opp-pet"));
-  fillNatures($("our-nature"));
-  fillTalents($("talent-atk"));
-  fillTalents($("talent-spa"));
-  fillSkills($("skill"));
-
-  // 默认填成文档里的回归例子，方便打开就能核对。
-  selectPet($("our-pet"), "水灵");
-  selectPet($("opp-pet"), "龙息帕尔");
-  selectValue($("our-nature"), "聪明");
-  $("talent-spa").value = "10";
-  selectValue($("skill"), "气泡");
+  const details = $("nature-details");
+  const summary = $("nature-summary");
+  const chips = $("nature-list");
+  chips.replaceChildren();
+  if (opponent.possible_natures.length === 0) {
+    details.hidden = true;
+    return;
+  }
+  details.hidden = false;
+  summary.textContent = `可能性格 ${opponent.natures_remaining} 种（点开查看）`;
+  for (const name of opponent.possible_natures) {
+    chips.append(element("li", "", name));
+  }
 }
 
-function rangeText(item) {
-  if (item.min === item.max) {
-    return String(item.min);
-  }
-  return `${item.min} ～ ${item.max}`;
-}
-
-function render(data) {
-  const damage = data.damage;
-  const opponent = data.opponent;
-  const box = $("result");
-  box.hidden = false;
+function renderDamage(damage, opponent) {
+  const box = $("damage-result");
   box.replaceChildren();
 
   const headline = element("div", "headline");
@@ -182,99 +400,63 @@ function render(data) {
         `${defenseName}最低 ${damage.max_case_defense} → 伤害 ${damage.max}。`
     )
   );
-
-  box.append(element("h3", "", "对方六维范围"));
-  const table = element("table", "stats");
-  const head = document.createElement("tr");
-  for (const title of ["属性", "最低 ～ 最高", "可能取值"]) {
-    head.append(element("th", "", title));
-  }
-  table.append(head);
-  for (const key of STAT_ORDER) {
-    const item = opponent.stats[key];
-    const row = document.createElement("tr");
-    const values = item.possible_values;
-    row.append(
-      element("td", "", STAT_NAMES[key]),
-      element("td", "value", rangeText(item)),
-      element("td", "value", `${values.length} 种`)
-    );
-    table.append(row);
-  }
-  box.append(table);
-
-  if (opponent.warnings.length > 0) {
-    const warnings = element("div", "warnings");
-    warnings.append(element("div", "", "提示"));
-    const list = document.createElement("ul");
-    for (const text of opponent.warnings) {
-      list.append(element("li", "", text));
-    }
-    warnings.append(list);
-    box.append(warnings);
-  }
 }
 
-async function calculate() {
-  const status = $("status");
-  const button = $("calc");
-  const our = meta.pets[Number($("our-pet").value)];
-  const opponent = meta.pets[Number($("opp-pet").value)];
-
-  const talents = {};
-  const atk = Number($("talent-atk").value);
-  const spa = Number($("talent-spa").value);
-  if (atk) {
-    talents.atk = atk;
+async function loadMeta() {
+  const response = await fetch("/api/meta");
+  if (!response.ok) {
+    throw new Error("读取精灵数据失败，请确认 server.py 还在运行。");
   }
-  if (spa) {
-    talents.spa = spa;
-  }
+  meta = await response.json();
 
-  const state = {
-    our_pet: {
-      name: our.name,
-      form: our.form || null,
-      nature: $("our-nature").value || null,
-      talents,
-    },
-    opponent_pet: {
-      name: opponent.name,
-      form: opponent.form || null,
-    },
-    skill: $("skill").value,
-    weather: $("weather").value || null,
-    observations: [],
-  };
+  state.ourPetIndex = findPetIndex("水灵");
+  state.oppPetIndex = findPetIndex("龙息帕尔");
+  state.nature = "聪明";
+  state.talents.spa = 10;
+  state.skill = "气泡";
 
-  button.disabled = true;
-  status.className = "status";
-  status.textContent = "计算中…";
+  fillPets($("our-pet"), state.ourPetIndex);
+  fillPets($("opp-pet"), state.oppPetIndex);
+  fillNatures($("our-nature"));
+  buildTalentControls();
+  buildBuffControls("our");
+  buildBuffControls("opp");
+  fillSkills("");
 
-  try {
-    const response = await fetch("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(state),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || "计算失败。");
-    }
-    render(data);
-    status.textContent = "";
-  } catch (error) {
-    status.className = "status error";
-    status.textContent = error.message || "计算失败，请看 server.py 窗口。";
-  } finally {
-    button.disabled = false;
-  }
+  $("our-pet").addEventListener("change", () => {
+    state.ourPetIndex = Number($("our-pet").value);
+    scheduleCalculate();
+  });
+  $("opp-pet").addEventListener("change", () => {
+    state.oppPetIndex = Number($("opp-pet").value);
+    scheduleCalculate();
+  });
+  $("our-nature").addEventListener("change", () => {
+    state.nature = $("our-nature").value;
+    scheduleCalculate();
+  });
+  $("skill").addEventListener("change", () => {
+    state.skill = $("skill").value;
+    updateSkillInfo();
+    scheduleCalculate();
+  });
+  $("skill-filter").addEventListener("input", () => {
+    fillSkills($("skill-filter").value);
+    scheduleCalculate();
+  });
+  $("weather").addEventListener("change", () => {
+    state.weather = $("weather").value;
+    scheduleCalculate();
+  });
+  $("starfall").addEventListener("change", () => {
+    const value = Number($("starfall").value);
+    state.starfall = Number.isFinite(value) ? value : 0;
+    scheduleCalculate();
+  });
+
+  calculate();
 }
-
-$("calc").addEventListener("click", calculate);
 
 loadMeta().catch((error) => {
-  const status = $("status");
-  status.className = "status error";
-  status.textContent = error.message;
+  setStatus(error.message, true);
 });

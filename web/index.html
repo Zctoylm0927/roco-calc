@@ -13,26 +13,53 @@
   </header>
 
   <main>
-    <section class="card">
-      <h2>我方</h2>
-      <div class="grid">
-        <label>精灵<select id="our-pet"></select></label>
-        <label>性格<select id="our-nature"></select></label>
-        <label>物攻天分<select id="talent-atk" class="talent"></select></label>
-        <label>魔攻天分<select id="talent-spa" class="talent"></select></label>
+    <section class="card battle">
+      <div class="side">
+        <h2>我方（已知）</h2>
+        <div class="grid">
+          <label>精灵<select id="our-pet"></select></label>
+          <label>性格<select id="our-nature"></select></label>
+        </div>
+
+        <h3>天分 <span class="hint">最多三项有加成</span></h3>
+        <div class="talents" id="our-talents"></div>
+
+        <h3>六维</h3>
+        <ul class="stats" id="our-stats">
+          <li class="hint">计算后显示</li>
+        </ul>
+
+        <h3>增减益 <span class="hint">四维每层 10 个百分点，速度每层 10 点</span></h3>
+        <div class="buffs" id="our-buffs"></div>
+      </div>
+
+      <div class="side">
+        <h2>对方（未知性格和天分）</h2>
+        <div class="grid">
+          <label>精灵<select id="opp-pet"></select></label>
+        </div>
+
+        <h3>六维范围</h3>
+        <ul class="stats" id="opp-stats">
+          <li class="hint">计算后显示</li>
+        </ul>
+
+        <details id="nature-details" hidden>
+          <summary id="nature-summary">可能性格</summary>
+          <ul class="chips" id="nature-list"></ul>
+        </details>
+
+        <h3>增减益 <span class="hint">四维每层 10 个百分点，速度每层 10 点</span></h3>
+        <div class="buffs" id="opp-buffs"></div>
       </div>
     </section>
 
     <section class="card">
-      <h2>对方</h2>
+      <h2>技能与状态</h2>
       <div class="grid">
-        <label>精灵<select id="opp-pet"></select></label>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>技能与天气</h2>
-      <div class="grid">
+        <label>搜索技能
+          <input id="skill-filter" type="search" placeholder="输入技能名筛选，例如 气泡">
+        </label>
         <label>技能<select id="skill"></select></label>
         <label>天气
           <select id="weather">
@@ -40,12 +67,14 @@
             <option value="雨天">雨天</option>
           </select>
         </label>
+        <label>星陨层数
+          <input id="starfall" type="number" min="0" max="99" step="1" value="0">
+        </label>
       </div>
-      <button id="calc" type="button">计算伤害范围</button>
+      <p id="skill-info" class="note"></p>
+      <div id="damage-result"></div>
       <p id="status" class="status"></p>
     </section>
-
-    <section id="result" class="card result" hidden></section>
   </main>
 
   <script src="/app.js"></script>

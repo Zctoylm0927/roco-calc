@@ -110,6 +110,22 @@ class TestInitialDamage(unittest.TestCase):
         self.assertEqual(len(opponent["possible_natures"]), 30)
 
 
+class TestOurPanel(unittest.TestCase):
+    def test_our_panel_is_included(self):
+        our = ra.analyze_battle(water_vs_paal())["our"]
+        self.assertEqual(our["pet"], "水灵")
+        self.assertEqual(our["nature"], "聪明")
+        self.assertEqual(our["stats"]["spa"], 270)
+        self.assertEqual(our["talents"]["spa"], 10)
+        self.assertEqual(our["stats"]["spe"], 153)
+
+    def test_speed_after_buffs(self):
+        state = water_vs_paal()
+        state["our_pet"]["buffs"] = {"spe": 2}
+        our = ra.analyze_battle(state)["our"]
+        self.assertEqual(our["speed_after_buffs"], 173)
+
+
 class TestDamageObservation(unittest.TestCase):
     def test_rain_341_locks_magic_defense(self):
         result = ra.analyze_battle(

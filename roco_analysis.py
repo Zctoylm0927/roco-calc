@@ -627,7 +627,24 @@ def analyze_battle(state):
     opponent_result["observations"] = results
     opponent_result["warnings"] = warnings
 
+    our_result = {
+        "pet": our_panel["pet"]["name"],
+        "form": our_panel["pet"]["form"],
+        "level": level,
+        "nature": (
+            our_panel["nature"]["name"] if our_panel["nature"] else None
+        ),
+        "talents": our_panel["talents"],
+        "stats": our_panel["stats"],
+        "buffs": our_buffs,
+        "speed_after_buffs": (
+            our_panel["stats"]["spe"]
+            + our_buffs["spe"] * rc.SPEED_POINTS_PER_LAYER
+        ),
+    }
+
     return {
+        "our": our_result,
         "opponent": opponent_result,
         "damage": _damage_range(
             model,
