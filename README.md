@@ -15,8 +15,9 @@
 - 当前出战双方显示速度，并按“先比先手值，再比速度”给出谁先行动的判断。
 - 显示精灵头像和攻击技能图标；缺图时显示名字首字占位。
 - 页面状态保存在浏览器本地，刷新后自动恢复。
+- 后端已支持完整对局日志：按回合记录双方行动、实际先手、伤害/生命变化、天气、增减益、印记、状态和回合结束快照，并通过 `POST /api/battle` 推断对方范围。网页上的“添加一回合”留到下一步。
 
-当前有 **173 个自动测试**，全部通过。
+当前有 **197 个自动测试**，全部通过。
 
 ## 最快上手
 
@@ -76,7 +77,7 @@ web/assets/skills/   攻击技能图标
 PYTHONIOENCODING=utf-8 python -m unittest discover -s tests -v
 ```
 
-应看到 `Ran 173 tests` 和 `OK`。
+应看到 `Ran 197 tests` 和 `OK`。
 
 ## 常用命令
 
@@ -112,6 +113,14 @@ PYTHONIOENCODING=utf-8 python analyze.py \
 PYTHONIOENCODING=utf-8 python team_demo.py
 ```
 
+### 完整对局日志演示
+
+```bash
+PYTHONIOENCODING=utf-8 python battle_demo.py
+```
+
+应看到对方龙息帕尔剩 `366 / 46320` 种、6 种性格，生命 `194～197`、显示 `50%`；第二只奇丽花仍是 `46320 / 46320` 种。示例文件在 `data/battle_example.json`，也可以用 `python battle_demo.py 文件路径` 分析自己的对局。
+
 ### 重新抓取数据
 
 `data/*.csv` 已经提交在仓库里，正常使用不需要重新抓。要更新数据时：
@@ -141,12 +150,16 @@ python crawl_learnsets.py
 | `roco_calc.py` | 核心库：面板值、属性倍率、伤害公式 |
 | `roco_analysis.py` | 单只精灵的范围推断 |
 | `roco_team.py` | 6 对 6 队伍推断、记录重放 |
+| `roco_skill_rules.py` | 从技能描述读取先手、应对和防御减伤 |
+| `roco_battle.py` | 完整对局日志校验、重放和范围推断 |
 | `calc.py` | 单只精灵伤害命令行 |
 | `analyze.py` | 单只精灵范围推断命令行 |
 | `team_demo.py` | 6 对 6 固定例子演示 |
+| `battle_demo.py` | 完整对局日志演示 |
+| `data/battle_example.json` | 完整对局日志示例 |
 | `server.py` | 本地网页服务和 JSON 接口 |
 | `web/` | 网页 HTML、CSS、JavaScript |
-| `tests/` | 自动测试 |
+| `tests/` | 自动测试（含 `test_roco_battle.py`） |
 | `docs/` | 架构、进度、设计、待办和历史记录 |
 | `DEVLOG.md` | 每一步做了什么、为什么、当前状态 |
 

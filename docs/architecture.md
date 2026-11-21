@@ -678,6 +678,56 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 - 默认从满血开始；中途开始记录时，要先用生命变化记录设置当前生命。
 - 如果游戏显示的伤害是“最多打到 0 为止”的截断值，而公式伤害超过剩余生命，这条记录可能对不上，需要按实际显示填写并人工判断。
 
+## 完整对局日志（第二十二步）
+
+新增 `roco_battle.py`，把零散的伤害记录升级成按回合保存的完整日志。日志是原始事实，性格/天分范围是重放后推导出来的结果。
+
+### 数据形状
+
+```text
+battle.json
+├─ version                 固定为 1
+├─ initial
+│  ├─ our_team[6]          我方精灵、形态、性格、天分、技能、初始能量
+│  ├─ opponent_team[6]     对方精灵、形态、已见/怀疑技能、初始能量
+│  ├─ active_our / active_opp
+│  └─ magic_points         {our: 4, opp: 4}
+├─ turns[]
+│  ├─ our_action / opp_action
+│  ├─ who_first            our / opp / null
+│  ├─ counter              本回合是否发生应对
+│  ├─ speed_inferable      本回合的先后能否用于推断速度
+│  ├─ our_intended_skill / opp_intended_skill  可选：被击倒没行动时原本打算用的技能
+│  ├─ events[]             damage / hp_change
+│  ├─ replacements         本回合击倒后的补位
+│  └─ snapshot_after       回合结束、补位完成后的全员快照
+└─ result                  可选：胜方和原因
+```
+
+行动有三种：`skill`（攻击/防御/状态）、`charge`（聚能，按状态处理，恢复 5 能量）、`switch`（切换，先手 +99）。被击倒没行动时行动留空；可选填原本打算用的技能，只用于先手度判断。
+
+每次伤害事件保存“发生时”的双方当前出战精灵状态、天气、双方印记、增减益和状态。回合结束快照保存全部 12 只精灵的生命、能量、永久/非永久增减益、状态，以及双方印记、天气剩余回合和魔力值。
+
+### 推断规则
+
+- 伤害：复用 `roco_team` 的候选位图筛选；额外支持防御技能的固定百分比减伤。
+- 纤维化、虚化：如果本次是物攻/魔攻，分别自动补上物防/魔防 +70%（7 层），再计算伤害。
+- 速度：只在没有应对、先手度相同、没有单方切换时使用；双方同时切换比较切换前场上的精灵。被击倒没行动时，必须有“原本打算用的技能”才能比较先手度。
+- 第一版不建模的印记、状态、特殊防御技能、特殊攻击技能和特性，会把对应事件标记为不参与推断，只记录。
+- 回合结束生命百分比、魔力值和击倒次数会做一致性检查；对不上会给出提示，不静默改数据。
+- 导入/导出文件时，原始日志是唯一事实来源；推断结果可以重新计算。
+
+### 接口
+
+- `POST /api/battle`：请求体是整场对局日志，返回 `our_team`、`opponent_team`、`active`、`turns`、`warnings`、`snapshot`、`magic_points`、`result`。
+- `GET /api/meta` 新增 `action_skills`（全部 579 个攻击/防御/状态技能）和每只精灵的 `action_skills`；旧的 `skills` 仍是 358 个攻击技能，旧页面不受影响。
+
+### 当前限制
+
+- 网页上的“添加一回合”还没有接，旧记录栏仍在；下一步替换。
+- 技能冷却、技能位置、传动、蓄力和特殊能量技能暂不记录/不推断，但数据结构和代码预留了扩展位置。
+- 特性、其他印记、状态技能的具体效果、特殊攻击技能尚未建模。
+
 ## 代码结构
 
 | 文件 | 作用 |
@@ -691,9 +741,12 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `roco_calc.py` | 核心库：数据加载、精灵/技能查询、面板值、属性倍率、伤害 |
 | `roco_analysis.py` | 范围推断：对方 46,320 种候选、记录过滤、可能性格 |
 | `roco_team.py` | 6 对 6 队伍推断：每只对方精灵独立候选、双向伤害、两种记录 |
+| `roco_skill_rules.py` | 从技能描述读取先手、应对和防御减伤 |
+| `roco_battle.py` | 完整对局日志：校验、重放、伤害/速度约束、范围推断 |
 | `calc.py` | 伤害命令行入口（中文输出，支持 `--json`） |
 | `analyze.py` | 范围推断命令行演示 |
 | `team_demo.py` | 6 对 6 队伍推断的固定例子演示 |
+| `battle_demo.py` | 完整对局日志的固定例子演示 |
 | `server.py` | 本地网页服务：JSON 接口 + 静态页面 |
 | `web/index.html` | 网页结构：左右两栏、技能状态、战斗记录 |
 | `web/app.js` | 网页交互：自动重算、记录增删改、本地保存 |
@@ -703,6 +756,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `tests/test_server.py` | 网页接口和静态页面的测试 |
 | `tests/test_learnsets.py` | 学习表解析、匹配和生成数据的测试 |
 | `tests/test_roco_team.py` | 6 对 6 队伍推断的测试 |
+| `tests/test_roco_battle.py` | 完整对局日志、速度约束、防御减伤和技能规则的测试 |
 
 数据文件：
 
@@ -713,6 +767,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 - `data/natures.csv`
 - `data/learnsets.csv`
 - `data/assets.json`（图片名单；图片本身在 `web/assets/`，只放本机）
+- `data/battle_example.json`（完整对局日志示例）
 
 ## 命令行用法（第六步）
 

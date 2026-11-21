@@ -213,6 +213,25 @@ def load_learnsets():
 
 
 @lru_cache(maxsize=None)
+def load_action_learnsets():
+    """读取全部可行动技能（攻击/防御/状态）的学习表。
+
+    和 load_learnsets() 不同，这里不按物攻/魔攻过滤，供对局日志手动
+    录入技能时使用。特性不是行动，不包含在内。
+    """
+    rows = _read_csv("learnsets.csv")
+    table = {}
+    for row in rows:
+        if row.get("category") not in ("攻击", "防御", "状态"):
+            continue
+        key = (row.get("name", ""), row.get("form", ""))
+        names = table.setdefault(key, set())
+        if row.get("skill_name"):
+            names.add(row["skill_name"])
+    return {key: tuple(sorted(names)) for key, names in table.items()}
+
+
+@lru_cache(maxsize=None)
 def load_type_multipliers():
     """读取 data/type_multipliers.csv，返回 {(防御方组合, 攻击属性): 倍率}。"""
     rows = _read_csv("type_multipliers.csv")

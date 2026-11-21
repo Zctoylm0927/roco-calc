@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "initial": {
+    "our_team": [
+      {
+        "pet": "水灵",
+        "form": "",
+        "nature": "聪明",
+        "talents": {
+          "spa": 10
+        },
+        "skills": [
+          "气泡",
+          "水炮"
+        ],
+        "energy": 10,
+        "max_energy": 10
+      },
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "opponent_team": [
+      {
+        "pet": "龙息帕尔",
+        "form": "",
+        "suspected_skills": [
+          "龙之利爪"
+        ],
+        "energy": 10,
+        "max_energy": 10
+      },
+      {
+        "pet": "奇丽花",
+        "form": "",
+        "suspected_skills": [],
+        "energy": 10,
+        "max_energy": 10
+      },
+      null,
+      null,
+      null,
+      null
+    ],
+    "active_our": 0,
+    "active_opp": 0,
+    "magic_points": {
+      "our": 4,
+      "opp": 4
+    }
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "our_action": {
+        "type": "skill",
+        "slot": 0,
+        "skill": "气泡"
+      },
+      "opp_action": {
+        "type": "skill",
+        "slot": 0,
+        "skill": "龙之利爪"
+      },
+      "who_first": "opp",
+      "counter": false,
+      "speed_inferable": true,
+      "events": [
+        {
+          "type": "damage",
+          "source_side": "theirs",
+          "source_slot": 0,
+          "target_side": "our",
+          "target_slot": 0,
+          "skill": "龙之利爪",
+          "total_damage": 160,
+          "hits": 1,
+          "hp_after": {
+            "side": "our",
+            "slot": 0,
+            "hp": 223
+          },
+          "context": {
+            "weather": null,
+            "our_marks": null,
+            "opp_marks": null,
+            "our_active": {
+              "slot": 0,
+              "hp": 383,
+              "energy": 10,
+              "buffs": null,
+              "statuses": []
+            },
+            "opp_active": {
+              "slot": 0,
+              "hp_percent": 100,
+              "energy": 10,
+              "buffs": null,
+              "statuses": []
+            }
+          }
+        },
+        {
+          "type": "damage",
+          "source_side": "our",
+          "source_slot": 0,
+          "target_side": "theirs",
+          "target_slot": 0,
+          "skill": "气泡",
+          "total_damage": 195,
+          "hits": 1,
+          "hp_after": {
+            "side": "theirs",
+            "slot": 0,
+            "hp_percent": 50
+          },
+          "context": {
+            "weather": null,
+            "our_marks": null,
+            "opp_marks": null,
+            "our_active": {
+              "slot": 0,
+              "hp": 223,
+              "energy": 10,
+              "buffs": null,
+              "statuses": []
+            },
+            "opp_active": {
+              "slot": 0,
+              "hp_percent": 100,
+              "energy": 10,
+              "buffs": null,
+              "statuses": []
+            }
+          }
+        }
+      ],
+      "replacements": {
+        "our": null,
+        "opp": null
+      },
+      "snapshot_after": {
+        "active_our": 0,
+        "active_opp": 0,
+        "weather": null,
+        "our_marks": null,
+        "opp_marks": null,
+        "magic_points": {
+          "our": 4,
+          "opp": 4
+        },
+        "our_pets": [
+          {
+            "hp": 223,
+            "energy": 7,
+            "buffs": null,
+            "statuses": []
+          },
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "opp_pets": [
+          {
+            "hp_percent": 50,
+            "energy": 7,
+            "buffs": null,
+            "statuses": []
+          },
+          {
+            "hp_percent": 100,
+            "energy": 10,
+            "buffs": null,
+            "statuses": []
+          },
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    }
+  ]
+}

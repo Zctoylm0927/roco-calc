@@ -76,6 +76,32 @@ class TestMeta(unittest.TestCase):
         skills = {skill["name"]: skill for skill in meta["skills"]}
         self.assertTrue(skills["气泡"]["icon"].startswith("/assets/skills/"))
 
+    def test_meta_action_skills(self):
+        meta = server.build_meta()
+        self.assertEqual(len(meta["action_skills"]), 579)
+        actions = {skill["name"]: skill for skill in meta["action_skills"]}
+        self.assertEqual(actions["防御"]["category"], "防御")
+        self.assertEqual(actions["防御"]["damage_reduction_percent"], 70)
+        self.assertIn("攻击", actions["防御"]["counter_tags"])
+        self.assertEqual(actions["魔法增效"]["category"], "状态")
+        self.assertEqual(actions["有效预防"]["priority"], 0)
+        self.assertEqual(actions["马步"]["priority"], -1)
+        self.assertEqual(actions["麻痹"]["priority"], 0)
+        self.assertEqual(actions["风隐"]["priority"], -1)
+        self.assertEqual(actions["伪造账单"]["priority"], 1)
+
+    def test_meta_action_learnsets(self):
+        meta = server.build_meta()
+        water = next(
+            pet for pet in meta["pets"]
+            if pet["name"] == "水灵" and not pet["form"]
+        )
+        self.assertEqual(len(water["action_skills"]), 45)
+        self.assertIn("气泡", water["action_skills"])
+        self.assertIn("防御", water["action_skills"])
+        self.assertIn("魔法增效", water["action_skills"])
+        self.assertTrue(set(water["skills"]).issubset(water["action_skills"]))
+
 
 class TestAnalyzeRequest(unittest.TestCase):
     def test_initial_range(self):
@@ -244,6 +270,39 @@ class TestHttp(unittest.TestCase):
         result = json.loads(body.decode("utf-8"))
         self.assertEqual(len(result["opponent_team"]), 6)
         self.assertEqual(result["opponent_team"][0]["pet"], "龙息帕尔")
+
+    def test_battle_endpoint(self):
+        payload = {
+            "version": 1,
+            "initial": {
+                "our_team": [
+                    {
+                        "pet": "水灵",
+                        "nature": "聪明",
+                        "talents": {"spa": 10},
+                        "skills": ["气泡"],
+                    }
+                ],
+                "opponent_team": [{"pet": "龙息帕尔"}],
+                "active_our": 0,
+                "active_opp": 0,
+            },
+            "turns": [],
+        }
+        status, body = self.post("/api/battle", payload)
+        self.assertEqual(status, 200)
+        result = json.loads(body.decode("utf-8"))
+        self.assertEqual(len(result["opponent_team"]), 6)
+        self.assertEqual(
+            result["opponent_team"][0]["builds"]["remaining"], 46320
+        )
+
+    def test_battle_error_returns_400(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/battle", {"version": 99})
+        self.assertEqual(ctx.exception.code, 400)
+        error = json.loads(ctx.exception.read().decode("utf-8"))
+        self.assertIn("版本", error["error"])
 
     def test_team_error_returns_400(self):
         state = json.loads(json.dumps(TEAM_STATE, ensure_ascii=False))
