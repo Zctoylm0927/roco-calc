@@ -12,12 +12,12 @@
     GET  /assets/...    本机图片（精灵头像、技能图标）
     POST /api/analyze   单只精灵：返回对方范围和伤害范围
     POST /api/team      6 对 6：返回每只对方精灵的范围和双方技能表
+    POST /api/battle    完整对局日志：返回推断结果和提示
     GET  /              最小页面 web/index.html
 """
 
 import argparse
 import json
-import re
 import sys
 import traceback
 from functools import lru_cache
@@ -26,7 +26,9 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import roco_analysis as ra
+import roco_battle as rb
 import roco_calc as rc
+import roco_skill_rules as rsr
 import roco_team as rt
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -41,31 +43,12 @@ STATIC_FILES = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
 }
 
-MAX_REQUEST_BYTES = 1_000_000
-
-PRIORITY_PATTERN = re.compile(r"先手([+-]\d+)")
-CONDITIONAL_PRIORITY_MARKERS = (
-    ("位于1号位时", "位于1号位时"),
-    ("天气为沙暴时", "沙暴天气时"),
-)
+MAX_REQUEST_BYTES = 10_000_000
 
 
 def _skill_priority(desc):
-    """从技能描述里读出先手值。
-
-    返回 (priority, priority_note)。普通技能的 priority 是 0；
-    无条件“先手+1/-1”直接给出整数；带位置或天气条件的先手不自动
-    套用，只在 priority_note 里提示条件。
-    """
-    text = str(desc or "")
-    match = PRIORITY_PATTERN.search(text)
-    if not match:
-        return 0, None
-    value = int(match.group(1))
-    for marker, label in CONDITIONAL_PRIORITY_MARKERS:
-        if marker in text:
-            return 0, f"{label}先手{value:+d}"
-    return value, None
+    """保留旧名字，实际规则集中在 roco_skill_rules。"""
+    return rsr.skill_priority(desc)
 
 
 @lru_cache(maxsize=None)
@@ -80,8 +63,9 @@ def load_assets():
 
 @lru_cache(maxsize=None)
 def build_meta():
-    """整理前端需要的精灵、性格和攻击技能列表。"""
+    """整理前端需要的精灵、性格、攻击技能和全部行动技能。"""
     learnsets = rc.load_learnsets()
+    action_learnsets = rc.load_action_learnsets()
     assets = load_assets()
     pet_items = assets.get("pets")
     if not isinstance(pet_items, list):
@@ -109,6 +93,9 @@ def build_meta():
                 (pet["number"], pet["name"], pet["form"])
             ),
             "skills": list(learnsets.get((pet["name"], pet["form"]), ())),
+            "action_skills": list(
+                action_learnsets.get((pet["name"], pet["form"]), ())
+            ),
         }
         for pet in rc.load_pets()
     ]
@@ -143,7 +130,40 @@ def build_meta():
                 }
             )
     skills.sort(key=lambda item: item["name"])
-    return {"pets": pets, "natures": natures, "skills": skills}
+
+    action_skills = []
+    for entries in rc.load_skills().values():
+        for skill in entries:
+            if skill["category"] not in rsr.ACTION_CATEGORIES:
+                continue
+            priority, priority_note = _skill_priority(skill.get("desc"))
+            action_skills.append(
+                {
+                    "name": skill["name"],
+                    "category": skill["category"],
+                    "element": skill["element"],
+                    "damage_class": skill["damage_class"],
+                    "power": skill.get("power"),
+                    "energy": skill.get("energy"),
+                    "desc": skill.get("desc", ""),
+                    "priority": priority,
+                    "priority_note": priority_note,
+                    "icon": skill_icons.get(skill["name"]),
+                    "damage_reduction_percent": rsr.damage_reduction_percent(
+                        skill.get("desc")
+                    ),
+                    "counter_tags": sorted(
+                        rsr.counter_tags(skill.get("desc"))
+                    ),
+                }
+            )
+    action_skills.sort(key=lambda item: item["name"])
+    return {
+        "pets": pets,
+        "natures": natures,
+        "skills": skills,
+        "action_skills": action_skills,
+    }
 
 
 def analyze_request(payload):
@@ -157,7 +177,24 @@ def analyze_team_request(payload):
     """处理 /api/team 的请求体；出错时抛 roco_calc.RocoCalcError。"""
     if not isinstance(payload, dict):
         raise ra.AnalysisError("请求内容必须是一个 JSON 对象。")
+    battle_log = payload.get("battle_log")
+    if battle_log is not None:
+        if not isinstance(battle_log, dict):
+            raise rb.BattleLogError("battle_log 必须是字典。")
+        battle_payload = dict(battle_log)
+        battle_payload["active_our_slot"] = payload.get("active_our_slot", 0)
+        battle_payload["active_opponent_slot"] = payload.get(
+            "active_opponent_slot", 0
+        )
+        return rb.analyze_battle_active(battle_payload)
     return rt.analyze_team(payload)
+
+
+def analyze_battle_request(payload):
+    """处理 /api/battle 的请求体：整场对局日志。"""
+    if not isinstance(payload, dict):
+        raise rb.BattleLogError("请求内容必须是一个 JSON 对象。")
+    return rb.analyze_battle_log(payload)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -227,7 +264,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/analyze", "/api/team"):
+        if path not in ("/api/analyze", "/api/team", "/api/battle"):
             self._send_json(404, {"error": "找不到这个地址。"})
             return
 
@@ -253,6 +290,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/team":
                 result = analyze_team_request(payload)
+            elif path == "/api/battle":
+                result = analyze_battle_request(payload)
             else:
                 result = analyze_request(payload)
         except rc.RocoCalcError as exc:

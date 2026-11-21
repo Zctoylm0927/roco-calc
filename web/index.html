@@ -45,114 +45,125 @@
     <section class="card active-card">
       <div class="section-head">
         <h2>当前出战</h2>
-        <span class="hint">技能表是从当前状态再打一次的预测，不是历史记录；先比先手值，再比速度</span>
+        <span class="hint">技能表使用对局推断出的范围和当前生命/增减益；可以在 6v6 卡片里切换任意对位查看。先比先手值，再比速度</span>
       </div>
       <div id="active-head" class="active-head"></div>
       <div id="active-tables" class="skill-columns"></div>
       <p id="status" class="status"></p>
+      <div id="calc-warnings" class="warnings" hidden></div>
     </section>
 
-    <section class="card record-card">
+    <section class="card battle-card">
       <div class="section-head">
-        <h2>战斗记录</h2>
-        <span class="hint">按添加顺序推断；每条记录保存当时的天气和双方增减益</span>
+        <h2>对局记录</h2>
+        <span class="hint">按回合记录；上方 6v6 对位仍可自由选择查看</span>
       </div>
 
-      <div class="record-layout">
-        <div class="record-form-panel">
-          <h3 class="subhead">添加记录</h3>
-          <div class="record-form">
-            <label class="record-field">记录类型
-              <select id="record-type">
-                <option value="damage">伤害</option>
-                <option value="hp_change">生命变化</option>
+      <div id="battle-lock-note" class="battle-banner" hidden></div>
+      <p id="battle-result" class="battle-result" hidden></p>
+
+      <div class="battle-toolbar">
+        <button id="battle-export" class="btn btn-small" type="button">导出对局</button>
+        <button id="battle-import-button" class="btn btn-small btn-secondary" type="button">导入对局</button>
+        <input id="battle-import-file" type="file" accept=".json,application/json" hidden>
+        <button id="battle-clear" class="btn btn-small btn-danger" type="button">清空对局</button>
+      </div>
+
+      <div class="battle-layout">
+        <div class="battle-form-panel">
+          <h3 class="subhead">添加一回合</h3>
+          <div id="battle-current" class="battle-current"></div>
+
+          <div class="battle-action-grid">
+            <div class="battle-action-box">
+              <h4>我方行动</h4>
+              <label class="record-field">行动
+                <select id="battle-our-action-type">
+                  <option value="skill">使用技能</option>
+                  <option value="charge">聚能</option>
+                  <option value="switch">切换</option>
+                  <option value="none">空（被击倒/不行动）</option>
+                </select>
+              </label>
+              <label id="battle-our-skill-field" class="record-field">技能
+                <select id="battle-our-skill"></select>
+              </label>
+              <label id="battle-our-switch-field" class="record-field" hidden>切换目标
+                <select id="battle-our-switch"></select>
+              </label>
+              <label id="battle-our-intended-field" class="record-field" hidden>原本打算用的技能（未执行）
+                <select id="battle-our-intended-skill"></select>
+              </label>
+            </div>
+
+            <div class="battle-action-box">
+              <h4>对方行动</h4>
+              <label class="record-field">行动
+                <select id="battle-opp-action-type">
+                  <option value="skill">使用技能</option>
+                  <option value="charge">聚能</option>
+                  <option value="switch">切换</option>
+                  <option value="none">空（被击倒/不行动）</option>
+                </select>
+              </label>
+              <label id="battle-opp-skill-field" class="record-field">技能
+                <select id="battle-opp-skill"></select>
+              </label>
+              <label id="battle-opp-switch-field" class="record-field" hidden>切换目标
+                <select id="battle-opp-switch"></select>
+              </label>
+              <label id="battle-opp-intended-field" class="record-field" hidden>原本打算用的技能（未执行）
+                <select id="battle-opp-intended-skill"></select>
+              </label>
+              <label class="battle-check">
+                <input id="battle-show-all-opp-skills" type="checkbox">
+                显示对方全部技能
+              </label>
+            </div>
+          </div>
+
+          <div class="record-field-pair">
+            <label class="record-field">谁先行动
+              <select id="battle-who-first">
+                <option value="our">我方先</option>
+                <option value="opp">对方先</option>
               </select>
             </label>
-
-            <div id="damage-record-fields" class="record-fields">
-              <label class="record-field">方向
-                <select id="record-direction">
-                  <option value="our_to_opp">我方 → 对方</option>
-                  <option value="opp_to_our">对方 → 我方</option>
-                </select>
-              </label>
-
-              <div class="record-field-pair">
-                <label class="record-field">攻击方位置
-                  <select id="record-attacker-slot"></select>
-                </label>
-                <label class="record-field">防守方位置
-                  <select id="record-defender-slot"></select>
-                </label>
-              </div>
-
-              <label class="record-field">技能
-                <select id="record-skill"></select>
-              </label>
-
-              <div class="record-field-pair">
-                <label class="record-field">伤害
-                  <input id="record-damage" type="number" min="0" step="1" placeholder="这一轮总共打掉多少">
-                </label>
-                <label id="record-hp-percent-field" class="record-field">打完对方剩（%）
-                  <input id="record-hp-percent" type="number" min="0" max="100" step="1" placeholder="可不填，例如 50">
-                </label>
-                <label id="record-remaining-hp-field" class="record-field" hidden>我方打完剩
-                  <input id="record-remaining-hp" type="number" min="0" step="1" placeholder="可不填，例如 146">
-                </label>
-              </div>
-
-              <details class="record-advanced">
-                <summary>更多（默认不用改）</summary>
-                <div class="record-field-pair">
-                  <label class="record-field">连击次数
-                    <input id="record-hits" type="number" min="1" max="99" step="1" value="1">
-                  </label>
-                  <label class="record-field">防守方星陨层数
-                    <input id="record-starfall" type="number" min="0" max="99" step="1" value="0">
-                  </label>
-                </div>
-              </details>
-            </div>
-
-            <div id="hp-change-record-fields" class="record-fields" hidden>
-              <label class="record-field">哪一方
-                <select id="record-hp-side">
-                  <option value="opp">对方</option>
-                  <option value="our">我方</option>
-                </select>
-              </label>
-
-              <label class="record-field">位置
-                <select id="record-hp-slot"></select>
-              </label>
-
-              <div id="record-opp-hp-fields" class="record-field-pair">
-                <label class="record-field">对方现在剩（%）
-                  <input id="record-hp-percent-change" type="number" min="0" max="100" step="1" placeholder="例如 80">
-                </label>
-                <label class="record-field">实际回血/掉血（可选）
-                  <input id="record-hp-delta" type="number" step="1" placeholder="回血 116，掉血 -50">
-                </label>
-              </div>
-
-              <label id="record-our-hp-field" class="record-field" hidden>我方现在剩
-                <input id="record-our-hp" type="number" min="0" step="1" placeholder="例如 146">
-              </label>
-            </div>
-
-            <button id="add-record" class="btn" type="button">添加伤害记录</button>
-            <p id="record-status" class="status" hidden></p>
+            <label class="battle-check">
+              <input id="battle-counter" type="checkbox">
+              本回合发生应对
+            </label>
           </div>
+          <p class="hint">被击倒、来不及行动的一方，把行动留空即可；后台会检查补位和前后一致性。</p>
+
+          <div class="battle-section-head">
+            <h4>伤害事件</h4>
+            <span class="hint">默认用回合开始时的状态；有未建模效果时勾选“不参与推断”</span>
+          </div>
+          <div id="battle-damage-events" class="battle-events"></div>
+
+          <div class="battle-section-head">
+            <h4>生命变化事件</h4>
+            <button id="battle-add-hp-event" class="btn btn-small btn-secondary" type="button">添加生命变化</button>
+          </div>
+          <div id="battle-hp-events" class="battle-events"></div>
+
+          <details id="battle-snapshot-details" class="battle-snapshot">
+            <summary>回合结束状态（默认沿用上一回合，只改有变化的部分）</summary>
+            <div id="battle-snapshot-editor"></div>
+          </details>
+
+          <button id="battle-add-turn" class="btn" type="button">添加本回合</button>
+          <p id="battle-status" class="status" hidden></p>
         </div>
 
-        <div class="record-list-panel">
+        <div class="battle-list-panel">
           <div class="record-list-head">
-            <h3 class="subhead">记录列表</h3>
-            <span class="hint">删除任意一条后会重新推断</span>
+            <h3 class="subhead">回合列表</h3>
+            <span class="hint">“从这回合起重填”会删掉这一回合及之后所有回合</span>
           </div>
-          <ol id="record-list" class="record-list"></ol>
-          <div id="warnings" class="warnings" hidden></div>
+          <ol id="battle-turn-list" class="record-list"></ol>
+          <div id="battle-warnings" class="warnings" hidden></div>
         </div>
       </div>
     </section>
