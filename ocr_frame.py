@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""按固定布局输出操作帧 JSON；头像候选及昵称辅助信息与原名分开保存。
+
+python ocr_frame.py 参考4.jpg --layout configs/ocr_reference4.json
+"""
+
+import argparse
+import json
+from pathlib import Path
+import re
+import time
+
+from download_ocr import load_image, prepare_config
+from ocr_skills import load_skill_pool, recognize
+import roco_calc as rc
+
+
+def validate_layout(layout, image_size):
+    if layout.get("image_size") != list(image_size):
+        raise ValueError("图片尺寸与布局配置不一致，请使用对应窗口尺寸的布局。")
+    skills = layout.get("skills", [])
+    if len(skills) != 4 or {s.get("slot") for s in skills} != {1, 2, 3, 4}:
+        raise ValueError("布局必须分别配置 1～4 号技能，不能缺少或重复。")
+    width, height = image_size
+    regions = [layout[side][key] for side in ("our", "opponent")
+               for key in ("display_name", "energy")]
+    regions += [layout[side]["avatar"] for side in ("our", "opponent")
+                if "avatar" in layout[side]]
+    regions += [skill[key] for skill in skills
+                for key in ("name", "power", "energy_cost")]
+    for box in regions:
+        if (len(box) != 4 or not all(type(v) is int for v in box) or not
+                (0 <= box[0] < box[2] <= width and
+                 0 <= box[1] < box[3] <= height)):
+            raise ValueError(f"布局包含无效裁剪坐标：{box}")
+
+
+def read_field(image, region, engine, numeric=False):
+    """只在配置的字段内读取；数字必须完整匹配，不从杂乱字符串提取。"""
+    from PIL import Image
+
+    crop = image.crop(region)
+    crop = crop.resize((crop.width * 3, crop.height * 3), Image.Resampling.LANCZOS)
+    result = engine(crop, use_det=False, use_cls=False)
+    text = result.txts[0].strip() if result.txts else None
+    confidence = float(result.scores[0]) if result.scores else None
+    reading = {"text": text, "confidence": confidence}
+    value = text if confidence is not None and confidence >= 0.5 else None
+    if numeric:
+        value = int(value) if value and re.fullmatch(r"[0-9]{1,5}", value) else None
+        if value is None or confidence < 0.85:
+            value, retries = retry_number(image.crop(region), engine)
+            reading["retries"] = retries
+    reading["status"] = "recognized" if value is not None else "unresolved"
+    reading["value"] = value
+    return value, reading
+
+
+def select_number(readings):
+    groups = {}
+    for reading in readings:
+        text, score = reading["text"], reading["confidence"]
+        if score >= 0.5 and re.fullmatch(r"[0-9]{1,5}", text):
+            groups.setdefault(int(text), []).append(score)
+    ranked = sorted(groups, key=lambda number: max(groups[number]), reverse=True)
+    if not ranked:
+        return None
+    best = ranked[0]
+    score = max(groups[best])
+    if score < 0.6 or (len(groups[best]) < 2 and score < 0.9):
+        return None
+    if len(ranked) > 1 and score - max(groups[ranked[1]]) < 0.15:
+        return None
+    return best
+
+
+def retry_number(crop, engine):
+    """低置信度数字做有限次旋转、反色重读，不把 D/O 自动当作 0。"""
+    import cv2
+    import numpy as np
+
+    pixels = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2BGR)
+    pixels = cv2.resize(pixels, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    height, width = pixels.shape[:2]
+    readings = []
+    for angle in (-15, 0, 15):
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
+        rotated = cv2.warpAffine(pixels, matrix, (width, height),
+                                 borderMode=cv2.BORDER_REPLICATE)
+        gray = cv2.cvtColor(rotated, cv2.COLOR_BGR2GRAY)
+        variants = [rotated] + [255 - cv2.threshold(channel, threshold, 255,
+                    cv2.THRESH_BINARY)[1] for channel, threshold in
+                    ((gray, 100), (gray, 160), (rotated[:, :, 2], 160))]
+        for variant in variants:
+            border = 255 if variant.ndim == 2 else (255, 255, 255)
+            variant = cv2.copyMakeBorder(variant, 15, 15, 15, 15,
+                        cv2.BORDER_CONSTANT, value=border)
+            result = engine(variant, use_det=False, use_cls=False)
+            if result.txts:
+                readings.append({"text": result.txts[0],
+                                 "confidence": float(result.scores[0])})
+    return select_number(readings), readings
+
+
+def pet_result(display_name, energy, identity=None, identity_source="provided"):
+    """昵称不能用作数据库身份；未确认身份时原名、编号、形态为 null。"""
+    return {
+        "name": identity["name"] if identity else None,
+        "number": identity["number"] if identity else None,
+        "form": identity["form"] if identity else None,
+        "pet_id": identity.get("pet_id") if identity else None,
+        "identity_source": identity_source if identity else "unresolved",
+        "display_name": display_name,
+        "energy": energy,
+    }
+
+
+def skill_result(slot, readings, displayed_power, energy_cost):
+    """每个固定位置单独组装，缺失识别不能让后面的技能前移。"""
+    row = readings[0] if len(readings) == 1 else {}
+    category = row.get("category")
+    power = displayed_power if category == "攻击" else None
+    return {
+        "slot": slot, "name": row.get("name"), "category": category,
+        "power": power, "base_power": row.get("base_power"),
+        "energy_cost": energy_cost,
+        "name_status": row.get("status", "unresolved"),
+        "power_status": ("not_applicable" if category in ("防御", "状态")
+                         else "recognized" if power is not None else "unresolved"),
+    }
+
+
+def analyze_frame(image, layout, engine, our_identity=None, opponent_identity=None,
+                  debug=False, avatar_matcher=None):
+    validate_layout(layout, image.size)
+    output = {"schema_version": 1, "frame_type": "operation", "skills": []}
+    diagnostics = {"pets": {}, "skills": []}
+    for side, identity in (("our", our_identity), ("opponent", opponent_identity)):
+        label, label_reading = read_field(image, layout[side]["display_name"], engine)
+        energy, energy_reading = read_field(image, layout[side]["energy"], engine, True)
+        avatar = None
+        source = "provided"
+        if avatar_matcher is not None and "avatar" in layout[side]:
+            avatar = avatar_matcher.match(image.crop(layout[side]["avatar"]), label)
+            if identity is None and avatar["identity"] is not None:
+                identity = avatar["identity"]
+                source = "avatar_and_name" if avatar["status"] == "visual_name_supported" else "avatar"
+        if side == "our":
+            our_identity = identity
+        output[side] = pet_result(label, energy, identity, source)
+        if avatar is not None:
+            output[side]["avatar_match"] = avatar
+        diagnostics["pets"][side] = {
+            "display_name": label_reading, "energy": energy_reading,
+        }
+    pool = load_skill_pool(our_identity["name"], our_identity["form"]) \
+        if our_identity else load_skill_pool()
+    for region in sorted(layout["skills"], key=lambda item: item["slot"]):
+        crop = image.crop(region["name"])
+        crop = crop.resize((crop.width * 3, crop.height * 3))
+        detected = recognize(crop, pool, engine)
+        rows = detected["skill_readings"]
+        category = rows[0].get("category") if len(rows) == 1 else None
+        if category in ("防御", "状态"):
+            power, power_reading = None, {"status": "not_applicable"}
+        else:
+            power, power_reading = read_field(image, region["power"], engine, True)
+        cost, cost_reading = read_field(image, region["energy_cost"], engine, True)
+        output["skills"].append(skill_result(region["slot"],
+                                rows, power, cost))
+        diagnostics["skills"].append({
+            "slot": region["slot"], **detected,
+            "power": power_reading, "energy_cost": cost_reading,
+        })
+    if debug:
+        output["debug"] = diagnostics
+    return output
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("image", type=Path)
+    parser.add_argument("--layout", type=Path, required=True)
+    parser.add_argument("--our-pet", help="已经确认的我方精灵原名或编号")
+    parser.add_argument("--our-form")
+    parser.add_argument("--opponent-pet", help="已经确认的敌方精灵原名或编号")
+    parser.add_argument("--opponent-form")
+    parser.add_argument("--debug", action="store_true", help="附加 OCR 原文和置信度")
+    parser.add_argument("--no-avatar", action="store_true", help="跳过头像检索，仅运行 OCR")
+    args = parser.parse_args()
+    for side in ("our", "opponent"):
+        if getattr(args, side + "_form") and not getattr(args, side + "_pet"):
+            parser.error(f"--{side}-form 需要同时指定 --{side}-pet")
+    try:
+        layout = json.loads(args.layout.read_text(encoding="utf-8"))
+        image = load_image(args.image)
+        validate_layout(layout, image.size)
+        our = rc.find_pet(args.our_pet, args.our_form) if args.our_pet else None
+        opponent = rc.find_pet(args.opponent_pet, args.opponent_form) \
+            if args.opponent_pet else None
+    except (OSError, ValueError, KeyError, TypeError, rc.RocoCalcError) as exc:
+        parser.error(str(exc))
+    from rapidocr import RapidOCR
+    engine = RapidOCR(config_path=str(prepare_config()))
+    matcher = None
+    if not args.no_avatar and any("avatar" in layout[side] for side in ("our", "opponent")):
+        from avatar_match import AvatarMatcher
+        matcher = AvatarMatcher()
+    start = time.perf_counter()
+    output = analyze_frame(image, layout, engine, our, opponent, args.debug, matcher)
+    if args.debug:
+        output["debug"]["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 1)
+    print(json.dumps(output, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
