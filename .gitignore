@@ -20,3 +20,8 @@ models/ocr/
 /参考*.png
 /参考*.jpg
 /*.mp4
+
+# 独立截图工具的构建产物和本地截图
+/build/
+/dist/
+/captures/

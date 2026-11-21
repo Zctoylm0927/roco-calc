@@ -1,5 +1,11 @@
 # 开发日志
 
+## 2026-11-21 · Windows独立MSS持续截图工具
+
+- 新增 `windows_capture.py`：Tk窗口选择、真实客户区与DPI处理、默认10分钟持续抓屏；目标采集20 FPS与PNG保存间隔独立配置。F9开始/停止，F8额外留图。切到后台/最小化时暂停，恢复前台后继续，实际时钟持续计时。
+- 采集与PNG写盘分线程，保存队列最多3帧，繁忙时跳过并计数，不缓存整段对局；保留原始PNG、逐图时间/客户区/DPI日志，以及结束统计。截图窗口不包含标题栏，不缩放，不加载OCR或头像模型。
+- 加入独立依赖、PyInstaller单文件构建脚本、PerMonitorV2清单和Windows Actions构建任务；构建后直接运行exe，对640×360原生窗口检查截图尺寸、RGB像素和短时连续抓屏。原生Windows产物需由构建任务验证，不以Linux测试冒充Windows验证。
+
 ## 2026-11-21 · 高清识别方案更新PR
 
 - 将固定区域离线视频采样整理为 `review_video.py`，保留原始OCR及原图检测框；支持独立导出已复核的27回合及摘要。高清ROI、采样锚点和扣能时序写入 `configs/video_reference_hd.json`，用户确认的记录写入 `data/battles/reference_hd.json`，移除本机路径。

@@ -19,7 +19,7 @@
 - “当前出战”伤害表使用对局记录推断出的对方范围、当前生命、双方增减益、天气和星陨；对局中也可以点击任意我方/对方位置查看其他对位。未建模的印记/状态会在表上方提示。
 - 队伍卡片只配置精灵、性格、天分和技能；生命、能量、增减益由对局记录提供，不再手动填写。
 
-当前有 **232 个自动测试**，全部通过。
+当前有 **236 个自动测试**，全部通过。
 
 ## 最快上手
 
@@ -79,7 +79,11 @@ web/assets/skills/   攻击技能图标
 PYTHONIOENCODING=utf-8 python -m unittest discover -s tests -v
 ```
 
-应看到 `Ran 232 tests` 和 `OK`。
+应看到 `Ran 236 tests` 和 `OK`。
+
+### Windows独立持续截图工具
+
+`RocoCapture.exe` 只用MSS抓取游戏窗口，默认持续10分钟、目标20 FPS抓屏、每秒保存一张原始PNG，支持F9开始/停止、F8额外留图。exe不需要Python、Conda或OCR模型。下载、保存频率设置和构建方法见 [Windows截图工具说明](docs/windows-capture.md)。
 
 ### 5. 可选：安装本地 CPU OCR
 

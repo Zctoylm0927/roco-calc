@@ -1,0 +1,2 @@
+# 独立截图工具：不安装OCR、OpenCV或Conda。
+mss==10.2.0

@@ -1,0 +1,61 @@
+name: Build Windows MSS capture tool
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows_capture.py'
+      - 'requirements-capture*.txt'
+      - 'build_capture.ps1'
+      - 'packaging/capture.manifest'
+      - 'tests/test_windows_capture.py'
+      - '.github/workflows/build-capture.yml'
+      - 'docs/windows-capture.md'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p test_windows_capture.py -v
+      - name: Build standalone executable
+        shell: pwsh
+        run: ./build_capture.ps1
+      - name: Test packaged executable against a real native window
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/capture/RocoCapture.exe -ArgumentList '--self-test', '--output', 'build/capture-self-test' -PassThru
+          if (-not $process.WaitForExit(60000)) {
+            $process.Kill()
+            throw 'Executable self-test timed out'
+          }
+          if ($process.ExitCode -ne 0) {
+            Get-Content build/capture-self-test/self-test-error.txt -ErrorAction SilentlyContinue
+            throw "Executable self-test failed: $($process.ExitCode)"
+          }
+          Get-Content build/capture-self-test/self-test.json
+      - name: Prepare download
+        shell: pwsh
+        run: |
+          Copy-Item docs/windows-capture.md dist/capture/README.md
+          (Get-FileHash dist/capture/RocoCapture.exe -Algorithm SHA256).Hash | Set-Content dist/capture/SHA256.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: RocoCapture-windows-x64
+          path: dist/capture/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve native self-test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: RocoCapture-self-test
+          path: build/capture-self-test/
+          if-no-files-found: ignore
+          retention-days: 7
