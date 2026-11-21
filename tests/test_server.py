@@ -297,6 +297,41 @@ class TestHttp(unittest.TestCase):
             result["opponent_team"][0]["builds"]["remaining"], 46320
         )
 
+    def test_team_battle_log_endpoint(self):
+        battle_log = {
+            "version": 1,
+            "initial": {
+                "our_team": [
+                    {
+                        "pet": "水灵",
+                        "nature": "聪明",
+                        "talents": {"spa": 10},
+                        "skills": ["气泡"],
+                    }
+                ],
+                "opponent_team": [{"pet": "龙息帕尔"}],
+                "active_our": 0,
+                "active_opp": 0,
+            },
+            "turns": [],
+        }
+        status, body = self.post(
+            "/api/team",
+            {
+                "battle_log": battle_log,
+                "active_our_slot": 0,
+                "active_opponent_slot": 0,
+            },
+        )
+        self.assertEqual(status, 200)
+        result = json.loads(body.decode("utf-8"))
+        self.assertEqual(
+            result["active"]["our_skills"][0]["skill"], "气泡"
+        )
+        self.assertEqual(
+            result["opponent_team"][0]["builds"]["remaining"], 46320
+        )
+
     def test_battle_error_returns_400(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/battle", {"version": 99})

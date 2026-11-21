@@ -255,6 +255,28 @@ class TestBattleLog(unittest.TestCase):
         self.assertTrue(result["turns"][0]["events"][0]["matched"])
         self.assertEqual(result["snapshot"]["weather"]["type"], "雨天")
 
+    def test_battle_active_uses_inferred_ranges(self):
+        payload = base_payload()
+        payload["initial"]["our_team"][0]["skills"] = ["气泡", "防御"]
+        payload["active_our_slot"] = 0
+        payload["active_opponent_slot"] = 0
+        result = rb.analyze_battle_active(payload)
+        self.assertIsNotNone(result["active"])
+        self.assertEqual(result["active"]["our_slot"], 0)
+        self.assertEqual(result["active"]["opponent_slot"], 0)
+        self.assertEqual(
+            [skill["skill"] for skill in result["active"]["our_skills"]],
+            ["气泡", "防御"],
+        )
+        self.assertFalse(result["active"]["our_skills"][1]["available"])
+        self.assertEqual(
+            [skill["skill"] for skill in result["active"]["opponent_skills"]],
+            ["龙之利爪"],
+        )
+        self.assertEqual(
+            result["opponent_team"][0]["builds"]["remaining"], 366
+        )
+
     def test_missing_context_skips_inference(self):
         payload = base_payload()
         payload["turns"][0]["events"][1]["context"] = None

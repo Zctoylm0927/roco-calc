@@ -177,6 +177,16 @@ def analyze_team_request(payload):
     """处理 /api/team 的请求体；出错时抛 roco_calc.RocoCalcError。"""
     if not isinstance(payload, dict):
         raise ra.AnalysisError("请求内容必须是一个 JSON 对象。")
+    battle_log = payload.get("battle_log")
+    if battle_log is not None:
+        if not isinstance(battle_log, dict):
+            raise rb.BattleLogError("battle_log 必须是字典。")
+        battle_payload = dict(battle_log)
+        battle_payload["active_our_slot"] = payload.get("active_our_slot", 0)
+        battle_payload["active_opponent_slot"] = payload.get(
+            "active_opponent_slot", 0
+        )
+        return rb.analyze_battle_active(battle_payload)
     return rt.analyze_team(payload)
 
 

@@ -150,7 +150,8 @@ function findPetIndex(name) {
 }
 
 function learnableSkills(petIndex) {
-  return meta.pets[petIndex].skills || [];
+  const pet = meta.pets[petIndex];
+  return pet.action_skills || pet.skills || [];
 }
 
 function filterSkills(petIndex, names) {
@@ -466,7 +467,6 @@ function defaultState() {
       ? "聪明"
       : null;
     slot.talents.spa = 10;
-    slot.currentHp = 306;
     slot.skills = filterSkills(water, ["气泡", "水炮", "天洪", "水弹枪"]);
     result.ourTeam[0] = slot;
   }
@@ -960,13 +960,17 @@ function buildBuffs(values) {
 
 function skillLabel(name) {
   const info = skillByName.get(name);
-  if (!info) {
-    return name;
+  if (info) {
+    const power = info.power === null || info.power === undefined
+      ? "?"
+      : info.power;
+    return `${name}（${info.element} · ${info.damage_class} · 威力 ${power}）`;
   }
-  const power = info.power === null || info.power === undefined
-    ? "?"
-    : info.power;
-  return `${name}（${info.element} · ${info.damage_class} · 威力 ${power}）`;
+  const action = actionSkillByName.get(name);
+  if (action) {
+    return `${name}（${action.category} · ${action.element}）`;
+  }
+  return name;
 }
 
 function buildSkillsSection(side, slot, index) {
@@ -987,7 +991,7 @@ function buildSkillsSection(side, slot, index) {
     list.append(element("li", "empty-note", "还没有选择技能。"));
   }
   slot.skills.forEach((name, position) => {
-    const info = skillByName.get(name);
+    const info = skillByName.get(name) || actionSkillByName.get(name);
     const item = element("li", "skill-chip");
     item.append(thumb(info ? info.icon : null, name, "skill-chip-icon"));
     item.append(element("span", "skill-chip-label", skillLabel(name)));
@@ -1076,48 +1080,14 @@ function buildOurFields(slot, index) {
     scheduleCalculate();
   });
   row.append(field("性格", natureSelect));
-
-  const hpInput = document.createElement("input");
-  hpInput.type = "number";
-  hpInput.min = "0";
-  hpInput.step = "1";
-  hpInput.className = "hp-input";
-  hpInput.placeholder = "留空 = 满血";
-  hpInput.value = slot.currentHp === null ? "" : String(slot.currentHp);
-  hpInput.addEventListener("input", () => {
-    const raw = hpInput.value.trim();
-    if (raw === "") {
-      slot.currentHp = null;
-      scheduleCalculate();
-      return;
-    }
-    const hp = Number(raw);
-    if (!Number.isInteger(hp) || hp < 0) {
-      setStatus("当前生命必须是 0 或更大的整数，留空表示满血。", true);
-      return;
-    }
-    slot.currentHp = hp;
-    scheduleCalculate();
-  });
-  row.append(field("记录起点生命", hpInput));
   fragment.append(row);
-  fragment.append(
-    element(
-      "p",
-      "hint",
-      "我方生命只用具体数字。没有记录时这里就是当前生命；有记录时按记录顺序从这里往后推算。"
-    )
-  );
-
   fragment.append(buildTalents(slot));
-  fragment.append(buildBuffs(slot.buffs));
   fragment.append(buildSkillsSection("our", slot, index));
   return fragment;
 }
 
 function buildOpponentFields(slot, index) {
   const fragment = document.createDocumentFragment();
-  fragment.append(buildBuffs(slot.buffs));
   fragment.append(buildSkillsSection("opp", slot, index));
   return fragment;
 }
@@ -1946,17 +1916,13 @@ function buildActiveSide(side, data, slotIndex) {
   const body = element("div", "active-side-body");
   body.append(element("div", "active-pet", summaryLabel(data)));
   if (side === "our") {
-    const startHp =
-      localSlot && localSlot.currentHp !== null
-        ? localSlot.currentHp
-        : data.max_hp;
-    const currentHp = rangeText(data.current_hp);
-    const changed =
-      data.current_hp.min !== startHp || data.current_hp.max !== startHp;
-    const text = changed
-      ? `记录前 ${numberText(startHp)} → 现在 ${currentHp} / ${numberText(data.max_hp)}`
-      : `生命 ${currentHp} / ${numberText(data.max_hp)}`;
-    body.append(element("div", "active-meta", text));
+    body.append(
+      element(
+        "div",
+        "active-meta",
+        `生命 ${rangeText(data.current_hp)} / ${numberText(data.max_hp)}`
+      )
+    );
     body.append(
       element(
         "div",
@@ -2657,7 +2623,24 @@ function battleResultText(result) {
   return reason ? `对局结束：${winner}（${reason}）` : `对局结束：${winner}`;
 }
 
+function syncHeaderWeather() {
+  const select = $("weather");
+  if (!select) {
+    return;
+  }
+  if (battleStarted()) {
+    const snapshot = currentBattleSnapshot();
+    const type = snapshot && snapshot.weather ? snapshot.weather.type : "";
+    select.value = type === "雨天" ? "雨天" : "";
+    select.disabled = true;
+  } else {
+    select.disabled = false;
+    select.value = state.weather;
+  }
+}
+
 function renderBattleCard() {
+  syncHeaderWeather();
   const resultBox = $("battle-result");
   if (resultBox) {
     const text = battleResultText(
@@ -3574,6 +3557,7 @@ async function addBattleTurn() {
     updateSlotSummaries(data);
     renderBattleCard();
     setBattleStatus("");
+    scheduleCalculate();
   } catch (error) {
     state.battle.turns.pop();
     if (!wasStarted && state.battle.turns.length === 0) {
@@ -3602,6 +3586,7 @@ async function deleteBattleFrom(index) {
     try {
       await analyzeBattleAndRender();
       renderTeams();
+      scheduleCalculate();
     } catch (error) {
       state = backup;
       saveState();
@@ -3836,7 +3821,6 @@ function renderResponse(data) {
       ? state.battle.inference
       : data;
   updateSlotSummaries(summaryData);
-  updateHpHints(data);
   renderActive(data.active, data);
   renderWarnings(data.warnings || []);
   renderBattleCard();
@@ -3892,14 +3876,15 @@ function slotPayload(side, slot) {
   const pet = meta.pets[slot.petIndex];
   const payload = {
     pet: { name: pet.name, form: pet.form || null },
-    buffs: { ...slot.buffs },
+    buffs: {},
     skills: [...slot.skills],
   };
 
   if (side === "our") {
     payload.nature = slot.nature || null;
     payload.talents = { ...slot.talents };
-    payload.current_hp = slot.currentHp;
+    // 没有对局记录时按满血预测；生命和增减益由对局记录提供。
+    payload.current_hp = null;
   }
   return payload;
 }
@@ -3948,7 +3933,7 @@ function recordPayload(record) {
 }
 
 function buildPayload() {
-  return {
+  const payload = {
     level: 60,
     weather: state.weather || null,
     active_our_slot: state.activeOur,
@@ -3961,6 +3946,15 @@ function buildPayload() {
     ),
     records: state.records.map(recordPayload),
   };
+  if (battleStarted()) {
+    payload.battle_log = {
+      version: 1,
+      initial: state.battle.initial,
+      turns: state.battle.turns,
+      result: state.battle.result,
+    };
+  }
+  return payload;
 }
 
 function friendlyError(error) {

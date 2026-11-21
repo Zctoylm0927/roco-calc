@@ -824,6 +824,7 @@ def _apply_snapshot_hp(snapshot, our_slots, opp_slots, level, rounding):
 
 
 def _apply_final_buffs(snapshot, our_slots, opp_slots):
+    our_starfall = _context_mark_layers(snapshot["our_marks"], "星陨印记")
     for index, our in enumerate(our_slots):
         if our is None:
             continue
@@ -832,6 +833,7 @@ def _apply_final_buffs(snapshot, our_slots, opp_slots):
         our["buffs_temporary"] = entry["buffs"]["temporary"]
         our["buffs_permanent"] = entry["buffs"]["permanent"]
         our["statuses"] = entry["statuses"]
+        our["starfall_layers"] = our_starfall
     starfall = _context_mark_layers(snapshot["opp_marks"], "星陨印记")
     for index, opponent in enumerate(opp_slots):
         if opponent is None:
@@ -1248,8 +1250,8 @@ def _winner_from_snapshot(snapshot, our_slots, opp_slots):
     return None
 
 
-def analyze_battle_log(payload):
-    """校验并分析一整场对局日志。"""
+def _replay_battle(payload):
+    """校验并重放整场日志；返回内部槽位和最终快照。"""
     if not isinstance(payload, dict):
         raise BattleLogError("对局日志必须是一个字典。")
     version = payload.get("version", BATTLE_VERSION)
@@ -1282,20 +1284,6 @@ def analyze_battle_log(payload):
         snapshot = result["snapshot_after"]
 
     _apply_final_buffs(snapshot, our_slots, opp_slots)
-    our_team, opponent_team = _summarize_team(
-        our_slots, opp_slots, snapshot, rounding
-    )
-    active_state = {
-        "active_our_slot": snapshot["active_our"],
-        "active_opponent_slot": snapshot["active_opp"],
-    }
-    active_weather = (
-        snapshot["weather"]["type"] if snapshot["weather"] else None
-    )
-    active = rt._active_result(
-        {**active_state, "level": level, "weather": active_weather},
-        state_options, our_slots, opp_slots,
-    )
     result = payload.get("result")
     if result is not None and not isinstance(result, dict):
         raise BattleLogError("result 必须是字典或空值。")
@@ -1310,13 +1298,133 @@ def analyze_battle_log(payload):
     return {
         "version": BATTLE_VERSION,
         "level": level,
+        "our_slots": our_slots,
+        "opp_slots": opp_slots,
+        "snapshot": snapshot,
+        "initial_snapshot": initial["snapshot"],
+        "rounding": rounding,
+        "state_options": state_options,
+        "results": results,
+        "warnings": warnings,
+        "result": result,
+    }
+
+
+def analyze_battle_log(payload):
+    """校验并分析一整场对局日志。"""
+    context = _replay_battle(payload)
+    level = context["level"]
+    our_slots = context["our_slots"]
+    opp_slots = context["opp_slots"]
+    snapshot = context["snapshot"]
+    our_team, opponent_team = _summarize_team(
+        our_slots, opp_slots, snapshot, context["rounding"]
+    )
+    active_weather = (
+        snapshot["weather"]["type"] if snapshot["weather"] else None
+    )
+    active = None
+    if our_slots[snapshot["active_our"]] is not None and opp_slots[snapshot["active_opp"]] is not None:
+        active = rt._active_result(
+            {
+                "active_our_slot": snapshot["active_our"],
+                "active_opponent_slot": snapshot["active_opp"],
+                "level": level,
+                "weather": active_weather,
+            },
+            context["state_options"], our_slots, opp_slots,
+        )
+    return {
+        "version": BATTLE_VERSION,
+        "level": level,
         "our_team": our_team,
         "opponent_team": opponent_team,
         "active": active,
-        "turns": results,
-        "initial_snapshot": initial["snapshot"],
+        "turns": context["results"],
+        "initial_snapshot": context["initial_snapshot"],
         "snapshot": snapshot,
         "magic_points": snapshot["magic_points"],
-        "result": result,
+        "result": context["result"],
+        "warnings": context["warnings"],
+    }
+
+
+def analyze_battle_active(payload):
+    """用整场日志推断出的范围，计算用户选择的当前对位伤害表。"""
+    context = _replay_battle(payload)
+    level = context["level"]
+    our_slots = context["our_slots"]
+    opp_slots = context["opp_slots"]
+    snapshot = context["snapshot"]
+    rounding = context["rounding"]
+    active_our = _slot(
+        payload.get("active_our_slot"),
+        "当前我方位置",
+        default=snapshot["active_our"],
+    )
+    active_opp = _slot(
+        payload.get("active_opponent_slot"),
+        "当前对方位置",
+        default=snapshot["active_opp"],
+    )
+    our_team, opponent_team = _summarize_team(
+        our_slots, opp_slots, snapshot, rounding
+    )
+    active_weather = (
+        snapshot["weather"]["type"] if snapshot["weather"] else None
+    )
+    warnings = []
+    active = None
+    if our_slots[active_our] is None:
+        warnings.append(f"我方第 {active_our + 1} 个位置还没有精灵。")
+    elif opp_slots[active_opp] is None:
+        warnings.append(f"对方第 {active_opp + 1} 个位置还没有精灵。")
+    elif opp_slots[active_opp]["bits"] == 0:
+        warnings.append("这只对方精灵已经没有可能的性格/天分组合，无法给出伤害表。")
+    else:
+        active = rt._active_result(
+            {
+                "active_our_slot": active_our,
+                "active_opponent_slot": active_opp,
+                "level": level,
+                "weather": active_weather,
+            },
+            context["state_options"], our_slots, opp_slots,
+        )
+    if active_weather and active_weather not in SUPPORTED_WEATHER:
+        warnings.append(
+            f"当前天气“{active_weather}”的伤害效果第一版未建模，伤害表没有计入。"
+        )
+    for side, marks, label in (
+        ("our", snapshot["our_marks"], "我方"),
+        ("opp", snapshot["opp_marks"], "对方"),
+    ):
+        for kind in ("positive", "negative"):
+            item = marks.get(kind)
+            if item and item["layers"] and item["name"] != "星陨印记":
+                warnings.append(
+                    f"{label}场上印记“{item['name']}”第一版未建模，伤害表没有计入。"
+                )
+    for side, entries, slot, label in (
+        ("our", snapshot["our_pets"], active_our, "我方"),
+        ("opp", snapshot["opp_pets"], active_opp, "对方"),
+    ):
+        entry = entries[slot]
+        if entry and entry["statuses"]:
+            names = "、".join(status["name"] for status in entry["statuses"])
+            warnings.append(
+                f"{label}当前精灵带有状态（{names}），伤害表没有计入状态效果。"
+            )
+    return {
+        "level": level,
+        "weather": active_weather,
+        "hp_percent_rounding": rounding,
+        "our_team": our_team,
+        "opponent_team": opponent_team,
+        "active": active,
+        "records": [],
         "warnings": warnings,
+        "snapshot": snapshot,
+        "magic_points": snapshot["magic_points"],
+        "result": context["result"],
     }

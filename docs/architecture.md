@@ -666,7 +666,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 
 ### 网页接口
 
-- `POST /api/team`：请求体就是 `analyze_team(state)` 的输入，原样返回结果；错误返回 400 和中文提示。
+- `POST /api/team`：没有 `battle_log` 时，请求体就是 `analyze_team(state)` 的输入；带 `battle_log` 和 `active_our_slot` / `active_opponent_slot` 时，调用 `analyze_battle_active`，用对局推断范围和当前状态计算所选对位。
 - `GET /api/meta`：在原来的精灵、性格、攻击技能之外，每只精灵多一个 `skills` 字段，列出它能学的攻击技能，供页面过滤下拉选项；每只精灵另有 `avatar`，每个攻击技能另有 `icon`，指向本机图片。
 - `GET /assets/...`：返回 `web/assets` 下的 PNG 图片；路径会先解析再检查，不能跳出这个目录。
 - 旧 `POST /api/analyze` 保持不变。
@@ -724,7 +724,7 @@ battle.json
 
 ### 当前限制
 
-- 网页“对局记录”已接上 `/api/battle`，支持添加/删除回合、回合结束快照和导出/导入；“当前出战”对位伤害表仍用 `/api/team` 和手动配置，下一步接入推断范围。
+- 网页“对局记录”已接上 `/api/battle`，支持添加/删除回合、回合结束快照和导出/导入；`/api/team` 支持可选 `battle_log`，“当前出战”对位伤害表使用对局推断范围、当前生命/能量、双方增减益、天气和星陨。
 - 技能冷却、技能位置、传动、蓄力和特殊能量技能暂不记录/不推断，但数据结构和代码预留了扩展位置。
 - 特性、其他印记、状态技能的具体效果、特殊攻击技能尚未建模。
 
