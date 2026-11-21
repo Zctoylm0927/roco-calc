@@ -43,6 +43,29 @@ function element(tag, className, text) {
   return node;
 }
 
+function thumb(src, name, className) {
+  const box = element("span", `thumb ${className || ""}`.trim());
+  const label = name || "?";
+  box.title = label;
+  if (src) {
+    const image = document.createElement("img");
+    image.src = src;
+    image.alt = label;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.addEventListener("error", () => {
+      image.remove();
+      box.classList.add("thumb-empty");
+      box.textContent = label.slice(0, 1);
+    });
+    box.append(image);
+  } else {
+    box.classList.add("thumb-empty");
+    box.textContent = label.slice(0, 1);
+  }
+  return box;
+}
+
 function petLabel(pet) {
   return pet.form ? `${pet.name}（${pet.form}）` : pet.name;
 }
@@ -726,7 +749,9 @@ function buildSkillsSection(side, slot, index) {
     list.append(element("li", "empty-note", "还没有选择技能。"));
   }
   slot.skills.forEach((name, position) => {
+    const info = skillByName.get(name);
     const item = element("li", "skill-chip");
+    item.append(thumb(info ? info.icon : null, name, "skill-chip-icon"));
     item.append(element("span", "skill-chip-label", skillLabel(name)));
 
     const remove = element("button", "skill-remove", "×");
@@ -869,10 +894,14 @@ function buildSlotCard(side, index, open) {
   card.dataset.side = side;
   card.dataset.index = String(index);
 
+  const pet = slot ? meta.pets[slot.petIndex] : null;
   const head = element("div", "slot-head");
   const title = element("button", "slot-title");
   title.type = "button";
   title.append(element("span", "slot-number", String(index + 1)));
+  title.append(
+    thumb(pet ? pet.avatar : null, pet ? pet.name : "空位", "slot-avatar")
+  );
   title.append(
     element(
       "span",
@@ -1624,11 +1653,20 @@ function updateHpHints(data) {
 function buildActiveSide(side, data, slotIndex) {
   const box = element("div", `active-side ${side}`);
   box.append(element("span", "active-tag", side === "our" ? "我方" : "对方"));
+  const localSlot =
+    side === "our" ? state.ourTeam[slotIndex] : state.oppTeam[slotIndex];
+  const pet = localSlot ? meta.pets[localSlot.petIndex] : null;
+  box.append(
+    thumb(
+      pet ? pet.avatar : null,
+      pet ? pet.name : summaryLabel(data),
+      "active-avatar"
+    )
+  );
 
   const body = element("div", "active-side-body");
   body.append(element("div", "active-pet", summaryLabel(data)));
   if (side === "our") {
-    const localSlot = state.ourTeam[slotIndex];
     const startHp =
       localSlot && localSlot.currentHp !== null
         ? localSlot.currentHp
@@ -1706,7 +1744,9 @@ function speedNoteText(our, opponent) {
 function buildSkillRow(skill, side) {
   const row = element("div", skill.available ? "skill-row" : "skill-row unavailable");
 
+  const info = skillByName.get(skill.skill);
   const head = element("div", "skill-row-head");
+  head.append(thumb(info ? info.icon : null, skill.skill, "skill-row-icon"));
   head.append(element("span", "skill-name-text", skill.skill));
   const power = skill.power === null || skill.power === undefined
     ? "?"
@@ -1718,7 +1758,6 @@ function buildSkillRow(skill, side) {
       `${skill.element} · ${skill.damage_class} · 威力 ${power}`
     )
   );
-  const info = skillByName.get(skill.skill);
   if (info && info.priority) {
     head.append(
       element(

@@ -66,6 +66,16 @@ class TestMeta(unittest.TestCase):
         self.assertEqual(len(pets), 621)
         self.assertTrue(all(pets.values()))
 
+    def test_meta_has_asset_paths(self):
+        meta = server.build_meta()
+        water = next(
+            pet for pet in meta["pets"]
+            if pet["name"] == "水灵" and not pet["form"]
+        )
+        self.assertTrue(water["avatar"].startswith("/assets/pets/"))
+        skills = {skill["name"]: skill for skill in meta["skills"]}
+        self.assertTrue(skills["气泡"]["icon"].startswith("/assets/skills/"))
+
 
 class TestAnalyzeRequest(unittest.TestCase):
     def test_initial_range(self):
@@ -173,6 +183,29 @@ class TestHttp(unittest.TestCase):
         self.assertEqual(status, 200)
         meta = json.loads(body.decode("utf-8"))
         self.assertEqual(len(meta["pets"]), 621)
+
+    def test_asset_file_served(self):
+        meta = server.build_meta()
+        water = next(
+            pet for pet in meta["pets"]
+            if pet["name"] == "水灵" and not pet["form"]
+        )
+        file_path = server.WEB_DIR / water["avatar"].lstrip("/")
+        if not file_path.exists():
+            self.skipTest("本机还没有下载图片")
+        status, body = self.get(water["avatar"])
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_missing_asset_returns_404(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/assets/pets/does-not-exist.png")
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_asset_path_traversal_blocked(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.get("/assets/%2e%2e/app.js")
+        self.assertEqual(ctx.exception.code, 404)
 
     def test_analyze_endpoint(self):
         status, body = self.post(

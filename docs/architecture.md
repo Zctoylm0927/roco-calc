@@ -545,11 +545,12 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 
 | 接口 | 作用 |
 |------|------|
-| `GET /api/meta` | 621 只精灵、30 种性格、358 个攻击技能 |
+| `GET /api/meta` | 621 只精灵、30 种性格、358 个攻击技能；精灵带 `avatar`，技能带 `icon` |
+| `GET /assets/...` | `web/assets` 下的精灵头像和技能图标 |
 | `POST /api/analyze` | 请求体同 `docs/frontend-design.md` 5.2 节，调用 `roco_analysis.analyze_battle` |
 | `GET /` 等 | `web/index.html`、`web/app.js`、`web/style.css` |
 
-错误统一返回 HTTP 400 和 `{"error": "中文原因"}`，不把堆栈发给浏览器；意外异常在服务器窗口打印，浏览器只看到一条通用提示。静态文件只白名单三个，不接受任意路径。
+错误统一返回 HTTP 400 和 `{"error": "中文原因"}`，不把堆栈发给浏览器；意外异常在服务器窗口打印，浏览器只看到一条通用提示。页面文件只白名单三个；图片只允许读取 `web/assets` 目录内的文件，其他路径一律拒绝。
 
 `POST /api/analyze` 的响应除了 `opponent`（对方范围）和 `damage`（伤害范围），还包含 `our`：我方六维、性格、天分、增减益和增减益后速度，供页面左栏直接显示，不用在浏览器里重算公式。
 
@@ -666,12 +667,13 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 ### 网页接口
 
 - `POST /api/team`：请求体就是 `analyze_team(state)` 的输入，原样返回结果；错误返回 400 和中文提示。
-- `GET /api/meta`：在原来的精灵、性格、攻击技能之外，每只精灵多一个 `skills` 字段，列出它能学的攻击技能，供页面过滤下拉选项。
+- `GET /api/meta`：在原来的精灵、性格、攻击技能之外，每只精灵多一个 `skills` 字段，列出它能学的攻击技能，供页面过滤下拉选项；每只精灵另有 `avatar`，每个攻击技能另有 `icon`，指向本机图片。
+- `GET /assets/...`：返回 `web/assets` 下的 PNG 图片；路径会先解析再检查，不能跳出这个目录。
 - 旧 `POST /api/analyze` 保持不变。
 
 ### 当前限制
 
-- 不支持速度先后、换人、特性、道具、护盾。
+- 速度只比较当前场上两只精灵；换人顺序、特性、道具、护盾尚未实现。
 - 一条伤害记录只能涉及一只对方精灵；不支持“对方打对方”。
 - 默认从满血开始；中途开始记录时，要先用生命变化记录设置当前生命。
 - 如果游戏显示的伤害是“最多打到 0 为止”的截断值，而公式伤害超过剩余生命，这条记录可能对不上，需要按实际显示填写并人工判断。
@@ -685,6 +687,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 | `crawl_skills.py` | 技能表爬取 |
 | `crawl_natures.py` | 性格表爬取 |
 | `crawl_learnsets.py` | 可学习技能表爬取（按精灵展开、合并学习来源） |
+| `download_assets.py` | 限速下载精灵头像和技能图标，生成 `data/assets.json` |
 | `roco_calc.py` | 核心库：数据加载、精灵/技能查询、面板值、属性倍率、伤害 |
 | `roco_analysis.py` | 范围推断：对方 46,320 种候选、记录过滤、可能性格 |
 | `roco_team.py` | 6 对 6 队伍推断：每只对方精灵独立候选、双向伤害、两种记录 |
@@ -709,6 +712,7 @@ python analyze.py --our 水灵 --nature 聪明 --talent 魔攻=10 \
 - `data/skills.csv`
 - `data/natures.csv`
 - `data/learnsets.csv`
+- `data/assets.json`（图片名单；图片本身在 `web/assets/`，只放本机）
 
 ## 命令行用法（第六步）
 

@@ -9,6 +9,7 @@
 
 只监听本机，不安装任何第三方包。提供：
     GET  /api/meta      精灵、性格、攻击技能和每只精灵的可学习技能
+    GET  /assets/...    本机图片（精灵头像、技能图标）
     POST /api/analyze   单只精灵：返回对方范围和伤害范围
     POST /api/team      6 对 6：返回每只对方精灵的范围和双方技能表
     GET  /              最小页面 web/index.html
@@ -22,6 +23,7 @@ import traceback
 from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 import roco_analysis as ra
 import roco_calc as rc
@@ -29,6 +31,8 @@ import roco_team as rt
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
+ASSET_DIR = WEB_DIR / "assets"
+ASSET_MANIFEST = BASE_DIR / "data" / "assets.json"
 
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -65,15 +69,45 @@ def _skill_priority(desc):
 
 
 @lru_cache(maxsize=None)
+def load_assets():
+    """读取本地图片名单；没有下载图片时返回空名单，页面显示占位。"""
+    try:
+        payload = json.loads(ASSET_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@lru_cache(maxsize=None)
 def build_meta():
     """整理前端需要的精灵、性格和攻击技能列表。"""
     learnsets = rc.load_learnsets()
+    assets = load_assets()
+    pet_items = assets.get("pets")
+    if not isinstance(pet_items, list):
+        pet_items = []
+    pet_avatars = {}
+    for item in pet_items:
+        if isinstance(item, dict):
+            pet_avatars[
+                (item.get("number"), item.get("name"), item.get("form") or "")
+            ] = item.get("avatar")
+    skill_items = assets.get("skills")
+    if not isinstance(skill_items, list):
+        skill_items = []
+    skill_icons = {}
+    for item in skill_items:
+        if isinstance(item, dict) and item.get("name"):
+            skill_icons[item["name"]] = item.get("icon")
     pets = [
         {
             "name": pet["name"],
             "form": pet["form"],
             "number": pet["number"],
             "types": pet["types"],
+            "avatar": pet_avatars.get(
+                (pet["number"], pet["name"], pet["form"])
+            ),
             "skills": list(learnsets.get((pet["name"], pet["form"]), ())),
         }
         for pet in rc.load_pets()
@@ -105,6 +139,7 @@ def build_meta():
                     "energy": skill.get("energy"),
                     "priority": priority,
                     "priority_note": priority_note,
+                    "icon": skill_icons.get(skill["name"]),
                 }
             )
     skills.sort(key=lambda item: item["name"])
@@ -141,6 +176,31 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send_bytes(status, body, "application/json; charset=utf-8")
 
+    def _send_asset(self, path):
+        """只允许读取 web/assets 下面的图片，防止跑到别的目录。"""
+        relative = unquote(path[len("/assets/"):])
+        try:
+            asset_root = ASSET_DIR.resolve()
+            file_path = (ASSET_DIR / relative).resolve()
+            file_path.relative_to(asset_root)
+        except (OSError, ValueError):
+            self._send_json(404, {"error": "找不到这个图片。"})
+            return
+        if not file_path.is_file():
+            self._send_json(404, {"error": "找不到这个图片。"})
+            return
+        content_type = (
+            "image/png"
+            if file_path.suffix.lower() == ".png"
+            else "application/octet-stream"
+        )
+        try:
+            body = file_path.read_bytes()
+        except OSError:
+            self._send_json(404, {"error": "读取图片失败。"})
+            return
+        self._send_bytes(200, body, content_type)
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/api/meta":
@@ -148,6 +208,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._send_json(200, {"ok": True})
+            return
+        if path.startswith("/assets/"):
+            self._send_asset(path)
             return
 
         static = STATIC_FILES.get(path)
