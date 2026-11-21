@@ -48,8 +48,112 @@
       </div>
       <div id="active-head" class="active-head"></div>
       <div id="active-tables" class="skill-columns"></div>
-      <div id="warnings" class="warnings" hidden></div>
       <p id="status" class="status"></p>
+    </section>
+
+    <section class="card record-card">
+      <div class="section-head">
+        <h2>战斗记录</h2>
+        <span class="hint">按添加顺序推断；每条记录保存当时的天气和双方增减益</span>
+      </div>
+
+      <div class="record-layout">
+        <div class="record-form-panel">
+          <h3 class="subhead">添加记录</h3>
+          <div class="record-form">
+            <label class="record-field">记录类型
+              <select id="record-type">
+                <option value="damage">伤害</option>
+                <option value="hp_change">生命变化</option>
+              </select>
+            </label>
+
+            <div id="damage-record-fields" class="record-fields">
+              <label class="record-field">方向
+                <select id="record-direction">
+                  <option value="our_to_opp">我方 → 对方</option>
+                  <option value="opp_to_our">对方 → 我方</option>
+                </select>
+              </label>
+
+              <div class="record-field-pair">
+                <label class="record-field">攻击方位置
+                  <select id="record-attacker-slot"></select>
+                </label>
+                <label class="record-field">防守方位置
+                  <select id="record-defender-slot"></select>
+                </label>
+              </div>
+
+              <label class="record-field">技能
+                <select id="record-skill"></select>
+              </label>
+
+              <div class="record-field-pair">
+                <label class="record-field">伤害
+                  <input id="record-damage" type="number" min="0" step="1" placeholder="这一轮总共打掉多少">
+                </label>
+                <label id="record-hp-percent-field" class="record-field">打完对方剩（%）
+                  <input id="record-hp-percent" type="number" min="0" max="100" step="1" placeholder="可不填，例如 50">
+                </label>
+                <label id="record-remaining-hp-field" class="record-field" hidden>我方打完剩
+                  <input id="record-remaining-hp" type="number" min="0" step="1" placeholder="可不填，例如 146">
+                </label>
+              </div>
+
+              <details class="record-advanced">
+                <summary>更多（默认不用改）</summary>
+                <div class="record-field-pair">
+                  <label class="record-field">连击次数
+                    <input id="record-hits" type="number" min="1" max="99" step="1" value="1">
+                  </label>
+                  <label class="record-field">防守方星陨层数
+                    <input id="record-starfall" type="number" min="0" max="99" step="1" value="0">
+                  </label>
+                </div>
+              </details>
+            </div>
+
+            <div id="hp-change-record-fields" class="record-fields" hidden>
+              <label class="record-field">哪一方
+                <select id="record-hp-side">
+                  <option value="opp">对方</option>
+                  <option value="our">我方</option>
+                </select>
+              </label>
+
+              <label class="record-field">位置
+                <select id="record-hp-slot"></select>
+              </label>
+
+              <div id="record-opp-hp-fields" class="record-field-pair">
+                <label class="record-field">对方现在剩（%）
+                  <input id="record-hp-percent-change" type="number" min="0" max="100" step="1" placeholder="例如 80">
+                </label>
+                <label class="record-field">实际回血/掉血（可选）
+                  <input id="record-hp-delta" type="number" step="1" placeholder="回血 116，掉血 -50">
+                </label>
+              </div>
+
+              <label id="record-our-hp-field" class="record-field" hidden>我方现在剩
+                <input id="record-our-hp" type="number" min="0" step="1" placeholder="例如 146">
+              </label>
+            </div>
+
+            <button id="add-record" class="btn" type="button">添加伤害记录</button>
+            <p id="record-status" class="status" hidden></p>
+          </div>
+        </div>
+
+        <div class="record-list-panel">
+          <div class="record-list-head">
+            <h3 class="subhead">记录列表</h3>
+            <span class="hint">删除任意一条后会重新推断</span>
+          </div>
+          <ol id="record-list" class="record-list"></ol>
+          <div id="warnings" class="warnings" hidden></div>
+        </div>
+      </div>
     </section>
   </main>
 
