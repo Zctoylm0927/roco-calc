@@ -1,0 +1,305 @@
+{
+  "source_file": "参考作战视频.mp4",
+  "confirmation_source": "user",
+  "dynamic_skill_mechanisms": [
+    "复写",
+    "借用",
+    "取念"
+  ],
+  "damage_rules": {
+    "non_combo_resolution": "取同一伤害实例的最后一个读数，不相加；技能伤害与状态效果伤害分开归类。",
+    "attribute_damage_font": "不同属性使用不同颜色；已确认白色对应普通系，其他颜色映射待补，不自动猜测。",
+    "white_font": "普通系",
+    "white_font_determines_effect_source": false,
+    "freeze": {
+      "effect_type": "普通效果",
+      "damage_element": "普通系",
+      "calculation": "percent_hp_execute",
+      "hp_percent": null,
+      "confirmation_source": "user"
+    }
+  },
+  "damage_confirmations": [
+    {
+      "id": "damage_clip_00",
+      "skill_damage": 81,
+      "final_display_damage": 81,
+      "visual_source": "water_number.png",
+      "sample_times_s": [
+        78.0,
+        78.2
+      ],
+      "note": "按放大后最终浮字81人工复核，不将动画初期读数当最终值。"
+    },
+    {
+      "id": "damage_clip_02",
+      "skill_damage": 102,
+      "final_display_damage": 102,
+      "visual_source": "damage_review_fire.png",
+      "sample_times_s": [
+        170.345,
+        170.709
+      ],
+      "note": "抵抗102，与HUD生命425至323相符；数字来源是最终浮字，非用生命差替代。"
+    },
+    {
+      "id": "damage_clip_10",
+      "skill_damage": 778,
+      "final_display_damage": 778,
+      "visual_source": "fire_ko_wide.png",
+      "sample_times_s": [
+        476.3,
+        476.4,
+        476.6
+      ],
+      "note": "高清最终浮字778，替代低清版误读770；原片复核结果见data/battles/reference_hd.json。",
+      "verified_source": "参考视频-高清.mp4"
+    },
+    {
+      "id": "damage_clip_11",
+      "skill_damage": 238,
+      "final_display_damage": 238,
+      "visual_source": "damage_review_last.png",
+      "sample_times_s": [
+        508.6,
+        508.9,
+        509.2
+      ],
+      "note": "克制238按最终浮字人工复核；随后敌方HP百分比为0。"
+    },
+    {
+      "id": "damage_clip_06",
+      "has_combo": false,
+      "skill_damage": 160,
+      "resolution": "last_reading_per_damage_instance_and_kind",
+      "font_classified_readings": [
+        {
+          "value": 96,
+          "font_color": "cyan",
+          "kind": "skill"
+        },
+        {
+          "value": 112,
+          "font_color": "cyan",
+          "kind": "skill"
+        },
+        {
+          "value": 128,
+          "font_color": "cyan",
+          "kind": "skill"
+        },
+        {
+          "value": 144,
+          "font_color": "white",
+          "kind": "status_effect",
+          "damage_element": "普通系"
+        },
+        {
+          "value": 160,
+          "font_color": "cyan",
+          "kind": "skill"
+        }
+      ],
+      "status_effects": [
+        {
+          "name": "冻结",
+          "font_color": "white",
+          "display_damage": 144,
+          "effect_type": "普通效果",
+          "damage_element": "普通系",
+          "calculation": "percent_hp_execute",
+          "hp_percent": null,
+          "caused_faint": true,
+          "mechanism_source": "user",
+          "numeric_source": "video_review",
+          "numeric_attribution_status": "按冻结文字与浮字时间关联，待复核；并非仅凭白色判定来源"
+        }
+      ],
+      "total_damage": null,
+      "note": "技能最终显示160；144单列为冻结普通效果的候选读数。白色仅表示普通系。用户确认化蝶由冻结击杀，不记为暴风雪直接击倒。不以160+144推算实际扣血。"
+    },
+    {
+      "id": "damage_clip_05",
+      "font_color": "white",
+      "damage_kind": "skill",
+      "damage_element": "普通系",
+      "skill_damage": 567,
+      "skill_name": "当头棒喝",
+      "final_display_damage": 567,
+      "total_damage": null,
+      "note": "白色代表普通系，与数据库中当头棒喝的属性一致，按该次技能最终显示伤害567记录；不再因白色拆为额外特殊效果。实际扣血不据此直接推算。"
+    }
+  ],
+  "additional_damage_observations": [
+    {
+      "id": "damage_manual_128",
+      "start_s": 127.727,
+      "end_s": 128.545,
+      "action_key": {
+        "side": "opponent",
+        "first_seen_s": 126.0
+      },
+      "skill_name": "破罐破摔",
+      "skill_damage": 121,
+      "final_display_damage": 121,
+      "target_side": "our",
+      "visual_source": "damage_review_fairy.png",
+      "status": "manually_reviewed_video_digits",
+      "round_number": null,
+      "note": "最终粉色浮字121，HUD由510到389。"
+    },
+    {
+      "id": "damage_manual_345",
+      "start_s": 344.8,
+      "end_s": 345.6,
+      "action_key": {
+        "side": "our",
+        "first_seen_s": 342.5
+      },
+      "skill_name": "炎枪",
+      "skill_damage": 47,
+      "final_display_damage": 47,
+      "target_side": "opponent",
+      "visual_source": "fire_block_number.png",
+      "status": "manually_reviewed_video_digits",
+      "round_number": null,
+      "note": "减伤提示下最终显示47。"
+    },
+    {
+      "id": "damage_manual_428",
+      "start_s": 428.182,
+      "end_s": 428.909,
+      "action_key": {
+        "side": "our",
+        "first_seen_s": 426.0
+      },
+      "skill_name": "筛管奔流",
+      "skill_damage": 75,
+      "final_display_damage": 75,
+      "target_side": "opponent",
+      "visual_source": "damage_review_blocked_grass.png",
+      "status": "manually_reviewed_video_digits",
+      "round_number": null,
+      "note": "克制75为最终读数；不把此前变动的数字叠加。"
+    },
+    {
+      "id": "damage_manual_093",
+      "start_s": 92.5,
+      "end_s": 93.5,
+      "action_key": {
+        "side": "our",
+        "first_seen_s": 92
+      },
+      "skill_name": "踩地",
+      "skill_damage": 84,
+      "final_display_damage": 84,
+      "target_side": "opponent",
+      "verified_source": "参考视频-高清.mp4",
+      "status": "manually_reviewed_hd_digits",
+      "round_number": null,
+      "note": "高清踩地最终84，阿布随后显示82%；不是低清初稿中的100%。"
+    }
+  ],
+  "identity_distinctions": [
+    {
+      "original_names": [
+        "阿布",
+        "布灵布灵"
+      ],
+      "relation": "different_species",
+      "confirmation_source": "user"
+    }
+  ],
+  "video_review_findings": [
+    {
+      "times_s": [
+        380,
+        390,
+        392.5,
+        397
+      ],
+      "finding": "06:20敌方召唤提示被OCR读成召哦了/召晚了，06:30右上HUD显示椰浆布丁，06:32召唤布灵布灵，06:37右上HUD显示布灵布灵。这是中间一次切换漏记，不涉及阿布。",
+      "evidence_image": "opponent_identity_review.png",
+      "confirmation_source": "video_review"
+    }
+  ],
+  "resolutions": [
+    {
+      "question_id": "copied_skills",
+      "answer": "寂灭骨龙携带借用，允许使用队友技能；冬至和踩地不因缺少原生学习记录而被否定。"
+    },
+    {
+      "question_id": "opponent_abu",
+      "answer": "阿布是尚未纳入数据库的新精灵，允许直接记录原始名字为阿布，数据库ID暂留空。阿布与布灵布灵是不同精灵，不能合并或互为别名。"
+    },
+    {
+      "question_id": "unknown_our_pet",
+      "answer": "03:30和04:03我方切换上场的是月牙雪熊，携带皮肤；皮肤头像尚未同步到数据库。"
+    },
+    {
+      "question_id": "repeated_summon",
+      "answer": "视频复核：06:20曾切换至HUD显示名为椰浆布丁的精灵，该提示因OCR混淆字被遗漏；06:32再召唤布灵布灵。撤销此前重复召唤的疑问，不涉及阿布。",
+      "confirmation_source": "video_review"
+    }
+  ],
+  "action_confirmations": [
+    {
+      "side": "opponent",
+      "first_seen_s": 87.0,
+      "field": "switch_to",
+      "original_name": "阿布"
+    },
+    {
+      "side": "our",
+      "first_seen_s": 162.5,
+      "field": "switch_to",
+      "original_name": "寂灭骨龙",
+      "carried_skill": "借用"
+    },
+    {
+      "side": "our",
+      "first_seen_s": 177.5,
+      "field": "actor",
+      "original_name": "寂灭骨龙",
+      "carried_skill": "借用"
+    },
+    {
+      "side": "our",
+      "first_seen_s": 209.5,
+      "field": "switch_to",
+      "original_name": "月牙雪熊",
+      "appearance": {
+        "is_skin": true,
+        "skin_name": null,
+        "avatar_database_status": "pending_sync"
+      }
+    },
+    {
+      "side": "our",
+      "first_seen_s": 243.0,
+      "field": "switch_to",
+      "original_name": "月牙雪熊",
+      "appearance": {
+        "is_skin": true,
+        "skin_name": null,
+        "avatar_database_status": "pending_sync"
+      }
+    },
+    {
+      "side": "our",
+      "first_seen_s": 492.5,
+      "field": "switch_to",
+      "original_name": "寂灭骨龙",
+      "carried_skill": "借用"
+    },
+    {
+      "side": "our",
+      "first_seen_s": 507.5,
+      "field": "actor",
+      "original_name": "寂灭骨龙",
+      "carried_skill": "借用"
+    }
+  ],
+  "preferred_numeric_source": "参考视频-高清.mp4",
+  "reviewed_result": "data/battles/reference_hd.json"
+}

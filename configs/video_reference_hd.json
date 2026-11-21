@@ -1,0 +1,828 @@
+{
+  "schema_version": 1,
+  "source_file": "参考视频-高清.mp4",
+  "screen_size": [
+    2560,
+    1440
+  ],
+  "viewport": [
+    405,
+    174,
+    2325,
+    1254
+  ],
+  "image_size": [
+    1920,
+    1080
+  ],
+  "expected_duration_s": 517.6333,
+  "duration_tolerance_s": 1,
+  "coordinate_space": "source_frame",
+  "note": "本片固定ROI和人工动作锚点；所有坐标为全屏原始像素，换窗口需重新校准；不代表自动寻找回合。",
+  "hud": {
+    "rois": {
+      "our_name": [
+        518,
+        216,
+        661,
+        245
+      ],
+      "our_hp": [
+        565,
+        248,
+        659,
+        270
+      ],
+      "our_energy": [
+        676,
+        276,
+        704,
+        299
+      ],
+      "opponent_name": [
+        2085,
+        216,
+        2242,
+        245
+      ],
+      "opponent_hp_percent": [
+        2140,
+        248,
+        2212,
+        270
+      ],
+      "opponent_energy": [
+        2100,
+        276,
+        2134,
+        299
+      ]
+    },
+    "times_s": [
+      35,
+      59.5,
+      65,
+      70,
+      77,
+      80,
+      84,
+      93.5,
+      94,
+      95,
+      99.5,
+      108,
+      117,
+      125.8,
+      132,
+      135,
+      141.8,
+      145,
+      160,
+      167.2,
+      172,
+      175,
+      177.8,
+      179.4,
+      185,
+      195,
+      207,
+      212.5,
+      216,
+      220,
+      236,
+      240,
+      245.8,
+      249.5,
+      257,
+      259,
+      264.7,
+      267,
+      269,
+      278,
+      280,
+      284.5,
+      291,
+      298,
+      302,
+      312,
+      316,
+      320,
+      325.5,
+      335,
+      340,
+      343.2,
+      345,
+      346,
+      348,
+      350,
+      362,
+      366,
+      369.5,
+      374,
+      377,
+      389,
+      390,
+      396,
+      408,
+      412,
+      420,
+      423,
+      425,
+      427.5,
+      428.5,
+      430.5,
+      431,
+      433,
+      436,
+      440,
+      448,
+      451,
+      464,
+      466,
+      473.8,
+      479,
+      499,
+      502,
+      506,
+      509.2,
+      510
+    ],
+    "scale": 3,
+    "use_det": false
+  },
+  "actions": {
+    "rois": {
+      "our": [
+        405,
+        300,
+        1365,
+        440
+      ],
+      "opponent": [
+        1365,
+        300,
+        2325,
+        440
+      ]
+    },
+    "offsets_s": [
+      0.15,
+      0.6
+    ],
+    "anchors": [
+      {
+        "id": "action_001",
+        "side": "opponent",
+        "time_s": 58.0
+      },
+      {
+        "id": "action_002",
+        "side": "our",
+        "time_s": 61.5
+      },
+      {
+        "id": "action_003",
+        "side": "our",
+        "time_s": 74.0
+      },
+      {
+        "id": "action_004",
+        "side": "opponent",
+        "time_s": 77.0
+      },
+      {
+        "id": "action_005",
+        "side": "opponent",
+        "time_s": 87.0
+      },
+      {
+        "id": "action_006",
+        "side": "our",
+        "time_s": 92.0
+      },
+      {
+        "id": "action_007",
+        "side": "our",
+        "time_s": 97.0
+      },
+      {
+        "id": "action_008",
+        "side": "opponent",
+        "time_s": 103.5
+      },
+      {
+        "id": "action_009",
+        "side": "our",
+        "time_s": 121.0
+      },
+      {
+        "id": "action_010",
+        "side": "opponent",
+        "time_s": 126.0
+      },
+      {
+        "id": "action_011",
+        "side": "opponent",
+        "time_s": 137.5
+      },
+      {
+        "id": "action_012",
+        "side": "our",
+        "time_s": 142.5
+      },
+      {
+        "id": "action_013",
+        "side": "our",
+        "time_s": 162.5
+      },
+      {
+        "id": "action_014",
+        "side": "opponent",
+        "time_s": 167.5
+      },
+      {
+        "id": "action_015",
+        "side": "our",
+        "time_s": 177.5
+      },
+      {
+        "id": "action_016",
+        "side": "opponent",
+        "time_s": 178.0
+      },
+      {
+        "id": "action_017",
+        "side": "our",
+        "time_s": 190.5
+      },
+      {
+        "id": "action_018",
+        "side": "our",
+        "time_s": 209.5
+      },
+      {
+        "id": "action_019",
+        "side": "opponent",
+        "time_s": 213.0
+      },
+      {
+        "id": "action_020",
+        "side": "our",
+        "time_s": 228.5
+      },
+      {
+        "id": "action_021",
+        "side": "opponent",
+        "time_s": 233.5
+      },
+      {
+        "id": "action_022",
+        "side": "our",
+        "time_s": 243.0
+      },
+      {
+        "id": "action_023",
+        "side": "opponent",
+        "time_s": 246.5
+      },
+      {
+        "id": "action_024",
+        "side": "our",
+        "time_s": 252.0
+      },
+      {
+        "id": "action_025",
+        "side": "opponent",
+        "time_s": 261.5
+      },
+      {
+        "id": "action_026",
+        "side": "our",
+        "time_s": 265.0
+      },
+      {
+        "id": "action_027",
+        "side": "opponent",
+        "time_s": 271.0
+      },
+      {
+        "id": "action_028",
+        "side": "our",
+        "time_s": 274.5
+      },
+      {
+        "id": "action_029",
+        "side": "opponent",
+        "time_s": 283.0
+      },
+      {
+        "id": "action_030",
+        "side": "our",
+        "time_s": 286.5
+      },
+      {
+        "id": "action_031",
+        "side": "opponent",
+        "time_s": 294.0
+      },
+      {
+        "id": "action_032",
+        "side": "our",
+        "time_s": 305.5
+      },
+      {
+        "id": "action_033",
+        "side": "opponent",
+        "time_s": 308.5
+      },
+      {
+        "id": "action_034",
+        "side": "opponent",
+        "time_s": 318.5
+      },
+      {
+        "id": "action_035",
+        "side": "our",
+        "time_s": 322.5
+      },
+      {
+        "id": "action_036",
+        "side": "opponent",
+        "time_s": 328.5
+      },
+      {
+        "id": "action_037",
+        "side": "opponent",
+        "time_s": 342.5
+      },
+      {
+        "id": "action_038",
+        "side": "our",
+        "time_s": 342.5
+      },
+      {
+        "id": "action_039",
+        "side": "our",
+        "time_s": 353.5
+      },
+      {
+        "id": "action_040",
+        "side": "opponent",
+        "time_s": 358.5
+      },
+      {
+        "id": "action_041",
+        "side": "opponent",
+        "time_s": 368.5
+      },
+      {
+        "id": "action_042",
+        "side": "our",
+        "time_s": 370.0
+      },
+      {
+        "id": "action_043",
+        "side": "opponent",
+        "time_s": 380.0
+      },
+      {
+        "id": "action_044",
+        "side": "our",
+        "time_s": 383.5
+      },
+      {
+        "id": "action_045",
+        "side": "opponent",
+        "time_s": 392.5
+      },
+      {
+        "id": "action_046",
+        "side": "our",
+        "time_s": 399.5
+      },
+      {
+        "id": "action_047",
+        "side": "our",
+        "time_s": 415.0
+      },
+      {
+        "id": "action_048",
+        "side": "opponent",
+        "time_s": 420.5
+      },
+      {
+        "id": "action_049",
+        "side": "our",
+        "time_s": 426.0
+      },
+      {
+        "id": "action_050",
+        "side": "opponent",
+        "time_s": 427.0
+      },
+      {
+        "id": "action_051",
+        "side": "opponent",
+        "time_s": 434.5
+      },
+      {
+        "id": "action_052",
+        "side": "our",
+        "time_s": 437.0
+      },
+      {
+        "id": "action_053",
+        "side": "opponent",
+        "time_s": 443.5
+      },
+      {
+        "id": "action_054",
+        "side": "our",
+        "time_s": 455.0
+      },
+      {
+        "id": "action_055",
+        "side": "opponent",
+        "time_s": 460.0
+      },
+      {
+        "id": "action_056",
+        "side": "our",
+        "time_s": 468.5
+      },
+      {
+        "id": "action_057",
+        "side": "opponent",
+        "time_s": 473.5
+      },
+      {
+        "id": "action_058",
+        "side": "our",
+        "time_s": 492.5
+      },
+      {
+        "id": "action_059",
+        "side": "opponent",
+        "time_s": 505.0
+      },
+      {
+        "id": "action_060",
+        "side": "our",
+        "time_s": 507.5
+      }
+    ],
+    "scale": 1,
+    "use_det": true
+  },
+  "damage": {
+    "samples": [
+      {
+        "id": "water",
+        "time_s": 78.1,
+        "roi": [
+          800,
+          510,
+          1380,
+          850
+        ]
+      },
+      {
+        "id": "ground_first",
+        "time_s": 93,
+        "roi": [
+          1500,
+          450,
+          2150,
+          850
+        ]
+      },
+      {
+        "id": "snow_hunt",
+        "time_s": 98.5,
+        "roi": [
+          1500,
+          450,
+          2150,
+          850
+        ]
+      },
+      {
+        "id": "fairy",
+        "time_s": 128.1,
+        "roi": [
+          720,
+          450,
+          1450,
+          950
+        ]
+      },
+      {
+        "id": "fire",
+        "time_s": 170.4,
+        "roi": [
+          750,
+          450,
+          1500,
+          950
+        ]
+      },
+      {
+        "id": "fall",
+        "time_s": 179.7,
+        "roi": [
+          550,
+          600,
+          1400,
+          1000
+        ]
+      },
+      {
+        "id": "head",
+        "time_s": 247.4,
+        "roi": [
+          700,
+          450,
+          1500,
+          1050
+        ]
+      },
+      {
+        "id": "blizzard",
+        "time_s": 289.4,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "freeze",
+        "time_s": 288.25,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "fire_524",
+        "time_s": 324.1,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "fire_47",
+        "time_s": 345.4,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "grass_75",
+        "time_s": 428.5,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "grass_251",
+        "time_s": 438.1,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      },
+      {
+        "id": "fire_778",
+        "time_s": 476.5,
+        "roi": [
+          1100,
+          700,
+          1850,
+          1100
+        ]
+      },
+      {
+        "id": "last",
+        "time_s": 508.9,
+        "roi": [
+          1500,
+          430,
+          2150,
+          900
+        ]
+      }
+    ],
+    "scale": 1,
+    "use_det": true
+  },
+  "energy_timing": {
+    "rois": {
+      "our": [
+        652,
+        273,
+        712,
+        302
+      ],
+      "opponent": [
+        2081,
+        273,
+        2140,
+        302
+      ]
+    },
+    "samples": [
+      {
+        "id": "winter_177.4",
+        "group": "winter",
+        "time_s": 177.4
+      },
+      {
+        "id": "winter_177.6",
+        "group": "winter",
+        "time_s": 177.6
+      },
+      {
+        "id": "winter_177.8",
+        "group": "winter",
+        "time_s": 177.8
+      },
+      {
+        "id": "winter_178",
+        "group": "winter",
+        "time_s": 178
+      },
+      {
+        "id": "winter_178.2",
+        "group": "winter",
+        "time_s": 178.2
+      },
+      {
+        "id": "winter_178.4",
+        "group": "winter",
+        "time_s": 178.4
+      },
+      {
+        "id": "winter_178.6",
+        "group": "winter",
+        "time_s": 178.6
+      },
+      {
+        "id": "winter_178.8",
+        "group": "winter",
+        "time_s": 178.8
+      },
+      {
+        "id": "winter_179",
+        "group": "winter",
+        "time_s": 179
+      },
+      {
+        "id": "winter_179.4",
+        "group": "winter",
+        "time_s": 179.4
+      },
+      {
+        "id": "winter_180",
+        "group": "winter",
+        "time_s": 180
+      },
+      {
+        "id": "fire_341.5",
+        "group": "fire",
+        "time_s": 341.5
+      },
+      {
+        "id": "fire_342",
+        "group": "fire",
+        "time_s": 342
+      },
+      {
+        "id": "fire_342.2",
+        "group": "fire",
+        "time_s": 342.2
+      },
+      {
+        "id": "fire_342.4",
+        "group": "fire",
+        "time_s": 342.4
+      },
+      {
+        "id": "fire_342.6",
+        "group": "fire",
+        "time_s": 342.6
+      },
+      {
+        "id": "fire_342.8",
+        "group": "fire",
+        "time_s": 342.8
+      },
+      {
+        "id": "fire_343",
+        "group": "fire",
+        "time_s": 343
+      },
+      {
+        "id": "fire_343.2",
+        "group": "fire",
+        "time_s": 343.2
+      },
+      {
+        "id": "fire_343.5",
+        "group": "fire",
+        "time_s": 343.5
+      },
+      {
+        "id": "fire_344",
+        "group": "fire",
+        "time_s": 344
+      },
+      {
+        "id": "fire_345",
+        "group": "fire",
+        "time_s": 345
+      },
+      {
+        "id": "fire_346",
+        "group": "fire",
+        "time_s": 346
+      },
+      {
+        "id": "grass_425",
+        "group": "grass",
+        "time_s": 425
+      },
+      {
+        "id": "grass_425.5",
+        "group": "grass",
+        "time_s": 425.5
+      },
+      {
+        "id": "grass_426",
+        "group": "grass",
+        "time_s": 426
+      },
+      {
+        "id": "grass_426.5",
+        "group": "grass",
+        "time_s": 426.5
+      },
+      {
+        "id": "grass_426.8",
+        "group": "grass",
+        "time_s": 426.8
+      },
+      {
+        "id": "grass_427",
+        "group": "grass",
+        "time_s": 427
+      },
+      {
+        "id": "grass_427.2",
+        "group": "grass",
+        "time_s": 427.2
+      },
+      {
+        "id": "grass_427.5",
+        "group": "grass",
+        "time_s": 427.5
+      },
+      {
+        "id": "grass_428",
+        "group": "grass",
+        "time_s": 428
+      },
+      {
+        "id": "grass_428.5",
+        "group": "grass",
+        "time_s": 428.5
+      },
+      {
+        "id": "grass_429",
+        "group": "grass",
+        "time_s": 429
+      },
+      {
+        "id": "grass_430",
+        "group": "grass",
+        "time_s": 430
+      }
+    ],
+    "scale": 2,
+    "use_det": false
+  }
+}

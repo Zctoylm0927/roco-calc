@@ -68,7 +68,48 @@ def match_skill(text, confidence, pool):
     return {"status": "unresolved", "name": None, "suggestions": suggestions}
 
 
-def recognize(image, pool, engine):
+def rotate_text(pixels, angle, background=255):
+    """旋转时扩展画布，避免倾斜文字或多位数字在边缘被截断。"""
+    import cv2
+    import math
+
+    height, width = pixels.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
+    cosine, sine = abs(matrix[0, 0]), abs(matrix[0, 1])
+    new_width = math.ceil(width * cosine + height * sine)
+    new_height = math.ceil(height * cosine + width * sine)
+    matrix[0, 2] += (new_width - width) / 2
+    matrix[1, 2] += (new_height - height) / 2
+    border = background if pixels.ndim == 2 else (background,) * pixels.shape[2]
+    return cv2.warpAffine(pixels, matrix, (new_width, new_height),
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=border)
+
+
+def resolve_readings(readings, pool):
+    accepted, suggestions = [], set()
+    for reading in readings:
+        matched = match_skill(reading["text"], reading["confidence"], pool)
+        suggestions.update(matched["suggestions"])
+        if matched["name"]:
+            accepted.append((reading, matched))
+    exact = [item for item in accepted if item[1]["status"] == "exact"]
+    choices = exact or accepted
+    names = {item[1]["name"] for item in choices}
+    first = readings[0] if readings else {"text": None, "confidence": None}
+    row = {"raw_text": first["text"], "raw_confidence": first["confidence"],
+           "status": "unresolved", "name": None, "readings": readings,
+           "suggestions": sorted(suggestions)}
+    if len(names) == 1:
+        reading, matched = max(choices, key=lambda item: item[0]["confidence"])
+        row.update(pool[matched["name"]])
+        row.update(status=matched["status"], recognition_text=reading["text"],
+                   recognition_confidence=reading["confidence"])
+    elif len(names) > 1:
+        row["suggestions"] = sorted(names)
+    return row
+
+
+def recognize(image, pool, engine, single_line=False):
     import cv2
     import numpy as np
     from rapidocr.utils.process_img import get_rotate_crop_image
@@ -104,27 +145,19 @@ def recognize(image, pool, engine):
                 if retry.txts:
                     readings.append({"text": retry.txts[0],
                                      "confidence": float(retry.scores[0])})
-        accepted = []
-        suggestions = set()
-        for reading in readings:
-            matched = match_skill(reading["text"], reading["confidence"], pool)
-            suggestions.update(matched["suggestions"])
-            if matched["name"]:
-                accepted.append((reading, matched))
-        exact = [item for item in accepted if item[1]["status"] == "exact"]
-        choices = exact or accepted
-        names = {item[1]["name"] for item in choices}
-        row = {"raw_text": text, "raw_confidence": float(score),
-               "status": "unresolved", "name": None, "readings": readings,
-               "suggestions": sorted(suggestions)}
-        if len(names) == 1:
-            reading, matched = max(choices, key=lambda item: item[0]["confidence"])
-            row.update(pool[matched["name"]])
-            row.update(status=matched["status"], recognition_text=reading["text"],
-                       recognition_confidence=reading["confidence"])
-        elif len(names) > 1:
-            row["suggestions"] = sorted(names)
-        skills.append(row)
+        skills.append(resolve_readings(readings, pool))
+    if single_line and not any(row["name"] for row in skills):
+        readings = [reading for row in skills for reading in row["readings"]]
+        for angle in (0, -15, -30, 15):
+            crop = rotate_text(pixels, angle)
+            crop = cv2.copyMakeBorder(crop, 12, 12, 12, 12,
+                                     cv2.BORDER_CONSTANT, value=(255, 255, 255))
+            retry = engine(crop, use_det=False, use_cls=False)
+            if retry.txts:
+                readings.append({"text": retry.txts[0],
+                                 "confidence": float(retry.scores[0])})
+        if readings:
+            skills = [resolve_readings(readings, pool)]
     return {"skill_readings": skills, "other_readings": other}
 
 

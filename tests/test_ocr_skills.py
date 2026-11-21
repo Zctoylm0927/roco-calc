@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ocr_skills import load_skill_pool, match_skill
+from ocr_skills import load_skill_pool, match_skill, resolve_readings
 
 
 class TestSkillPoolMatching(unittest.TestCase):
@@ -37,6 +37,23 @@ class TestSkillPoolMatching(unittest.TestCase):
         result = match_skill("能量守恒", 0.99, {"能量守恒": {}})
         self.assertEqual(result["status"], "exact")
         self.assertEqual(result["name"], "能量守恒")
+
+    def test_retry_preserves_original_text_and_records_pool_correction(self):
+        readings = [{"text": "团兽", "confidence": 0.76},
+                    {"text": "国兽", "confidence": 0.86}]
+        result = resolve_readings(readings, {"困兽": {"name": "困兽", "category": "攻击"}})
+        self.assertEqual(result["raw_text"], "团兽")
+        self.assertEqual(result["name"], "困兽")
+        self.assertEqual(result["status"], "corrected")
+        self.assertEqual(result["readings"], readings)
+
+    def test_conflicting_exact_retries_remain_unresolved(self):
+        result = resolve_readings([
+            {"text": "飞断", "confidence": 0.95},
+            {"text": "虫群", "confidence": 0.94},
+        ], {"飞断": {"name": "飞断"}, "虫群": {"name": "虫群"}})
+        self.assertIsNone(result["name"])
+        self.assertEqual(set(result["suggestions"]), {"飞断", "虫群"})
 
 
 if __name__ == "__main__":

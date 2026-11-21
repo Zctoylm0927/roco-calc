@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ocr_frame import pet_result, select_number, skill_result, validate_layout
+from ocr_frame import (parse_hp, pet_result, resolve_frame_region, select_number,
+                       skill_result, validate_layout)
 
 
 class TestStructuredFrame(unittest.TestCase):
@@ -64,6 +65,30 @@ class TestStructuredFrame(unittest.TestCase):
         duplicate["skills"][1]["slot"] = 1
         with self.assertRaises(ValueError):
             validate_layout(duplicate, (2094, 1179))
+
+    def test_desktop_viewport_and_content_image_share_one_layout(self):
+        path = Path(__file__).resolve().parents[1] / "configs" / "ocr_1600x900_on_1920x1080.json"
+        layout = json.loads(path.read_text())
+        self.assertEqual(resolve_frame_region(layout, (1920, 1080)),
+                         [160, 66, 1760, 966])
+        self.assertEqual(resolve_frame_region(layout, (1600, 900)), [0, 0, 1600, 900])
+        validate_layout(layout, (1920, 1080))
+        validate_layout(layout, (1600, 900))
+
+    def test_title_bar_or_out_of_screen_viewport_is_rejected(self):
+        layout = {"image_size": [1600, 900], "screen_size": [1920, 1080]}
+        for box in ([160, 36, 1760, 966], [-1, 66, 1599, 966],
+                    [400, 66, 2000, 966]):
+            with self.subTest(viewport=box):
+                with self.assertRaises(ValueError):
+                    resolve_frame_region({**layout, "viewport": box}, (1920, 1080))
+
+    def test_hp_values_must_have_separator_and_valid_bounds(self):
+        self.assertEqual(parse_hp("403 / 403"), (403, 403))
+        self.assertEqual(parse_hp("0/403"), (0, 403))
+        for text in (None, "403403", "404/403", "0/0", "403/403血量"):
+            with self.subTest(text=text):
+                self.assertEqual(parse_hp(text), (None, None))
 
 
 if __name__ == "__main__":

@@ -15,3 +15,8 @@ web/assets/skills/
 # 本地 OCR 环境和模型
 .conda/
 models/ocr/
+
+# 本地参考截图和录屏；只提交采样配置与复核JSON
+/参考*.png
+/参考*.jpg
+/*.mp4

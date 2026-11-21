@@ -15,17 +15,39 @@ from ocr_skills import load_skill_pool, recognize
 import roco_calc as rc
 
 
-def validate_layout(layout, image_size):
-    if layout.get("image_size") != list(image_size):
+def resolve_frame_region(layout, image_size):
+    """同时接受纯游戏图与包含指定游戏窗口的桌面截图；不缩放 OCR 像素。"""
+    expected = layout.get("image_size")
+    if (not isinstance(expected, list) or len(expected) != 2 or
+            not all(type(value) is int and value > 0 for value in expected)):
+        raise ValueError("布局 image_size 必须为两个正整数。")
+    if expected == list(image_size):
+        return [0, 0, *expected]
+    if layout.get("screen_size") != list(image_size):
         raise ValueError("图片尺寸与布局配置不一致，请使用对应窗口尺寸的布局。")
+    box = layout.get("viewport")
+    width, height = image_size
+    if (not isinstance(box, list) or len(box) != 4 or
+            not all(type(value) is int for value in box) or not
+            (0 <= box[0] < box[2] <= width and 0 <= box[1] < box[3] <= height)):
+        raise ValueError("布局 viewport 必须是屏幕内的游戏内容矩形，不包含标题栏。")
+    if [box[2] - box[0], box[3] - box[1]] != expected:
+        raise ValueError("viewport 的大小必须与游戏内容 image_size 一致。")
+    return box
+
+
+def validate_layout(layout, image_size):
+    resolve_frame_region(layout, image_size)
     skills = layout.get("skills", [])
     if len(skills) != 4 or {s.get("slot") for s in skills} != {1, 2, 3, 4}:
         raise ValueError("布局必须分别配置 1～4 号技能，不能缺少或重复。")
-    width, height = image_size
+    width, height = layout["image_size"]
     regions = [layout[side][key] for side in ("our", "opponent")
                for key in ("display_name", "energy")]
     regions += [layout[side]["avatar"] for side in ("our", "opponent")
                 if "avatar" in layout[side]]
+    regions += [layout[side][key] for side in ("our", "opponent")
+                for key in ("hp", "hp_percent") if key in layout[side]]
     regions += [skill[key] for skill in skills
                 for key in ("name", "power", "energy_cost")]
     for box in regions:
@@ -49,7 +71,7 @@ def read_field(image, region, engine, numeric=False):
     if numeric:
         value = int(value) if value and re.fullmatch(r"[0-9]{1,5}", value) else None
         if value is None or confidence < 0.85:
-            value, retries = retry_number(image.crop(region), engine)
+            value, retries = retry_number(image.crop(region), engine, reading)
             reading["retries"] = retries
     reading["status"] = "recognized" if value is not None else "unresolved"
     reading["value"] = value
@@ -74,15 +96,22 @@ def select_number(readings):
     return best
 
 
-def retry_number(crop, engine):
+def retry_number(crop, engine, initial_reading=None):
     """低置信度数字做有限次旋转、反色重读，不把 D/O 自动当作 0。"""
     import cv2
     import numpy as np
 
     pixels = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2BGR)
     pixels = cv2.resize(pixels, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    readings = [dict(initial_reading)] if initial_reading else []
+    # 数字徽标也可能倾斜；检测框会先做透视校正，避免直接读整块徽标。
+    detected = engine(pixels, use_det=True, use_cls=False, text_score=0.3)
+    for text, score in zip(detected.txts or (), detected.scores or ()):
+        readings.append({"text": text.strip(), "confidence": float(score)})
+    selected = select_number(readings)
+    if selected is not None:
+        return selected, readings
     height, width = pixels.shape[:2]
-    readings = []
     for angle in (-15, 0, 15):
         matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
         rotated = cv2.warpAffine(pixels, matrix, (width, height),
@@ -115,6 +144,15 @@ def pet_result(display_name, energy, identity=None, identity_source="provided"):
     }
 
 
+def parse_hp(text):
+    match = re.fullmatch(r"\s*([0-9]{1,5})\s*/\s*([0-9]{1,5})\s*", text or "")
+    if match:
+        current, maximum = map(int, match.groups())
+        if 0 <= current <= maximum and maximum > 0:
+            return current, maximum
+    return None, None
+
+
 def skill_result(slot, readings, displayed_power, energy_cost):
     """每个固定位置单独组装，缺失识别不能让后面的技能前移。"""
     row = readings[0] if len(readings) == 1 else {}
@@ -133,6 +171,9 @@ def skill_result(slot, readings, displayed_power, energy_cost):
 def analyze_frame(image, layout, engine, our_identity=None, opponent_identity=None,
                   debug=False, avatar_matcher=None):
     validate_layout(layout, image.size)
+    source_size = image.size
+    viewport = resolve_frame_region(layout, source_size)
+    image = image.crop(viewport)
     output = {"schema_version": 1, "frame_type": "operation", "skills": []}
     diagnostics = {"pets": {}, "skills": []}
     for side, identity in (("our", our_identity), ("opponent", opponent_identity)):
@@ -153,12 +194,27 @@ def analyze_frame(image, layout, engine, our_identity=None, opponent_identity=No
         diagnostics["pets"][side] = {
             "display_name": label_reading, "energy": energy_reading,
         }
+        if "hp" in layout[side]:
+            hp_text, hp_reading = read_field(image, layout[side]["hp"], engine)
+            hp, max_hp = parse_hp(hp_text)
+            output[side].update(hp=hp, max_hp=max_hp)
+            hp_reading["status"] = "recognized" if hp is not None else "unresolved"
+            diagnostics["pets"][side]["hp"] = hp_reading
+        if "hp_percent" in layout[side]:
+            text, percent_reading = read_field(image, layout[side]["hp_percent"], engine)
+            match = re.fullmatch(r"([0-9]{1,3})\s*%", text or "")
+            percent = int(match.group(1)) if match else None
+            if percent is not None and not 0 <= percent <= 100:
+                percent = None
+            output[side]["hp_percent"] = percent
+            percent_reading["status"] = "recognized" if percent is not None else "unresolved"
+            diagnostics["pets"][side]["hp_percent"] = percent_reading
     pool = load_skill_pool(our_identity["name"], our_identity["form"]) \
         if our_identity else load_skill_pool()
     for region in sorted(layout["skills"], key=lambda item: item["slot"]):
         crop = image.crop(region["name"])
         crop = crop.resize((crop.width * 3, crop.height * 3))
-        detected = recognize(crop, pool, engine)
+        detected = recognize(crop, pool, engine, single_line=True)
         rows = detected["skill_readings"]
         category = rows[0].get("category") if len(rows) == 1 else None
         if category in ("防御", "状态"):
@@ -173,6 +229,8 @@ def analyze_frame(image, layout, engine, our_identity=None, opponent_identity=No
             "power": power_reading, "energy_cost": cost_reading,
         })
     if debug:
+        diagnostics.update(source_size=list(source_size), viewport=viewport,
+                           frame_size=list(image.size))
         output["debug"] = diagnostics
     return output
 
