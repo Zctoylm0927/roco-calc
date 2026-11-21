@@ -1640,6 +1640,13 @@ function buildActiveSide(side, data, slotIndex) {
       ? `记录前 ${numberText(startHp)} → 现在 ${currentHp} / ${numberText(data.max_hp)}`
       : `生命 ${currentHp} / ${numberText(data.max_hp)}`;
     body.append(element("div", "active-meta", text));
+    body.append(
+      element(
+        "div",
+        "active-meta",
+        `速度 ${numberText(data.speed_after_buffs)}`
+      )
+    );
   } else {
     const builds = data.builds || {};
     body.append(
@@ -1653,12 +1660,47 @@ function buildActiveSide(side, data, slotIndex) {
       element(
         "div",
         "active-meta",
+        `速度 ${rangeText(data.speed_after_buffs)}`
+      )
+    );
+    body.append(
+      element(
+        "div",
+        "active-meta",
         `可能 ${numberText(builds.remaining)} / ${numberText(builds.total)} 种`
       )
     );
   }
   box.append(body);
   return box;
+}
+
+function speedNoteText(our, opponent) {
+  const ourSpeed = our && our.speed_after_buffs;
+  const range = opponent && opponent.speed_after_buffs;
+  if (
+    typeof ourSpeed !== "number" ||
+    !range ||
+    typeof range.min !== "number" ||
+    typeof range.max !== "number"
+  ) {
+    return "";
+  }
+  let conclusion;
+  if (ourSpeed > range.max) {
+    conclusion = "同先手值时，我方一定先手";
+  } else if (ourSpeed < range.min) {
+    conclusion = "同先手值时，对方一定先手";
+  } else {
+    conclusion =
+      `同先手值时，对方速度低于 ${numberText(ourSpeed)} 时我方先手，` +
+      `高于 ${numberText(ourSpeed)} 时对方先手，` +
+      `等于 ${numberText(ourSpeed)} 时同速顺序不确定`;
+  }
+  return (
+    `速度判断：我方 ${numberText(ourSpeed)}，对方 ${rangeText(range)}。` +
+    `先比先手值，再比速度；${conclusion}。`
+  );
 }
 
 function buildSkillRow(skill, side) {
@@ -1676,6 +1718,20 @@ function buildSkillRow(skill, side) {
       `${skill.element} · ${skill.damage_class} · 威力 ${power}`
     )
   );
+  const info = skillByName.get(skill.skill);
+  if (info && info.priority) {
+    head.append(
+      element(
+        "span",
+        "priority-tag",
+        `先手 ${formatSigned(info.priority)}`
+      )
+    );
+  } else if (info && info.priority_note) {
+    head.append(
+      element("span", "priority-tag conditional", `条件先手：${info.priority_note}`)
+    );
+  }
   row.append(head);
 
   if (!skill.available) {
@@ -1740,6 +1796,10 @@ function renderActive(active, data) {
   head.append(buildActiveSide("our", our, active.our_slot));
   head.append(element("span", "vs", "对"));
   head.append(buildActiveSide("opp", opponent, active.opponent_slot));
+  const speedNote = speedNoteText(our, opponent);
+  if (speedNote) {
+    head.append(element("div", "speed-note", speedNote));
+  }
 
   tables.append(
     buildSkillPanel("我方技能 → 对方", active.our_skills, "our")

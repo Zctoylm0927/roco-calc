@@ -16,6 +16,7 @@
 
 import argparse
 import json
+import re
 import sys
 import traceback
 from functools import lru_cache
@@ -37,6 +38,30 @@ STATIC_FILES = {
 }
 
 MAX_REQUEST_BYTES = 1_000_000
+
+PRIORITY_PATTERN = re.compile(r"先手([+-]\d+)")
+CONDITIONAL_PRIORITY_MARKERS = (
+    ("位于1号位时", "位于1号位时"),
+    ("天气为沙暴时", "沙暴天气时"),
+)
+
+
+def _skill_priority(desc):
+    """从技能描述里读出先手值。
+
+    返回 (priority, priority_note)。普通技能的 priority 是 0；
+    无条件“先手+1/-1”直接给出整数；带位置或天气条件的先手不自动
+    套用，只在 priority_note 里提示条件。
+    """
+    text = str(desc or "")
+    match = PRIORITY_PATTERN.search(text)
+    if not match:
+        return 0, None
+    value = int(match.group(1))
+    for marker, label in CONDITIONAL_PRIORITY_MARKERS:
+        if marker in text:
+            return 0, f"{label}先手{value:+d}"
+    return value, None
 
 
 @lru_cache(maxsize=None)
@@ -70,6 +95,7 @@ def build_meta():
                 continue
             if skill.get("power") is None:
                 continue
+            priority, priority_note = _skill_priority(skill.get("desc"))
             skills.append(
                 {
                     "name": skill["name"],
@@ -77,6 +103,8 @@ def build_meta():
                     "damage_class": skill["damage_class"],
                     "power": skill["power"],
                     "energy": skill.get("energy"),
+                    "priority": priority,
+                    "priority_note": priority_note,
                 }
             )
     skills.sort(key=lambda item: item["name"])

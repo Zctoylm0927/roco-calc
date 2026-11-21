@@ -40,6 +40,21 @@ class TestMeta(unittest.TestCase):
         self.assertIn("水灵", names)
         self.assertIn("龙息帕尔", names)
 
+    def test_meta_skill_priority(self):
+        skills = {
+            skill["name"]: skill
+            for skill in server.build_meta()["skills"]
+        }
+        self.assertEqual(skills["先发制人"]["priority"], 1)
+        self.assertEqual(skills["俯冲"]["priority"], 1)
+        self.assertEqual(skills["后发制人"]["priority"], -1)
+        self.assertIsNone(skills["气泡"]["priority_note"])
+        self.assertEqual(skills["气泡"]["priority"], 0)
+        self.assertEqual(skills["拖拉机"]["priority"], 0)
+        self.assertIn("1号位", skills["拖拉机"]["priority_note"])
+        self.assertEqual(skills["扬尘"]["priority"], 0)
+        self.assertIn("沙暴", skills["扬尘"]["priority_note"])
+
     def test_meta_has_learnable_attack_skills(self):
         pets = {
             (pet["name"], pet["form"]): pet["skills"]

@@ -114,6 +114,11 @@ class TestTeamSetup(unittest.TestCase):
         result = rt.analyze_team(make_state())
         our = result["our_team"][0]
         self.assertEqual(our["current_hp"], {"min": 306, "max": 306})
+        self.assertEqual(our["speed_after_buffs"], 153)
+        self.assertEqual(
+            result["opponent_team"][0]["speed_after_buffs"],
+            {"min": 158, "max": 234},
+        )
         self.assertNotIn("current_hp_percent", our)
         self.assertNotIn("hp_percent", our)
         for skill in result["active"]["opponent_skills"]:

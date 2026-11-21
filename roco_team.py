@@ -1107,6 +1107,19 @@ def _opponent_summary(opponent, rounding):
         "observed_skills": list(opponent["observed_skills"]),
     })
 
+    speed_stats = summary.get("stats", {}).get("spe")
+    if speed_stats:
+        speed_buff = (
+            opponent.get("buffs", {}).get("spe", 0)
+            * rc.SPEED_POINTS_PER_LAYER
+        )
+        summary["speed_after_buffs"] = {
+            "min": speed_stats["min"] + speed_buff,
+            "max": speed_stats["max"] + speed_buff,
+        }
+    else:
+        summary["speed_after_buffs"] = None
+
     if opponent["bits"] == 0:
         summary["current_hp"] = None
         summary["current_hp_percent"] = None
