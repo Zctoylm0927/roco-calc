@@ -210,6 +210,10 @@ class TestBattleLog(unittest.TestCase):
         self.assertIn("龙之利爪", opponent["observed_skills"])
         self.assertEqual(result["turns"][0]["speed_inferable"], True)
         self.assertEqual(result["magic_points"], {"our": 4, "opp": 4})
+        self.assertEqual(result["initial_snapshot"]["active_our"], 0)
+        self.assertEqual(
+            result["initial_snapshot"]["our_pets"][0]["hp"], 383
+        )
 
     def test_rain_weather_is_used(self):
         payload = base_payload()

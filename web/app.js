@@ -1,6 +1,7 @@
 "use strict";
 
-const STORAGE_KEY = "roco-calc-team-v1";
+const STORAGE_KEY = "roco-calc-battle-v1";
+const OLD_STORAGE_KEY = "roco-calc-team-v1";
 const STAT_NAMES = {
   hp: "生命",
   atk: "物攻",
@@ -23,10 +24,20 @@ const NUMBER_FORMAT = new Intl.NumberFormat("zh-CN");
 
 let meta = null;
 let skillByName = new Map();
+let actionSkillByName = new Map();
 let petOptions = [];
 let state = null;
 let calcTimer = null;
 let requestId = 0;
+let battleAnalysisId = 0;
+let battleDraft = null;
+let battlePreBase = null;
+let battleDraftDamageEvents = [];
+let battleDraftHpEvents = [];
+let battleDraftReplacements = { our: null, opp: null };
+let battleStatusText = {};
+let battleDraftSig = "";
+let latestTeamResult = null;
 
 function $(id) {
   return document.getElementById(id);
@@ -64,6 +75,18 @@ function thumb(src, name, className) {
     box.textContent = label.slice(0, 1);
   }
   return box;
+}
+
+function freshBattle() {
+  return { initial: null, turns: [], result: null, inference: null };
+}
+
+function battleStarted() {
+  return Boolean(state && state.battle && state.battle.initial);
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function petLabel(pet) {
@@ -433,6 +456,7 @@ function defaultState() {
     oppTeam: Array(6).fill(null),
     records: [],
     nextRecordId: 1,
+    battle: freshBattle(),
   };
 
   const water = findPetIndex("水灵");
@@ -521,31 +545,239 @@ function sanitizeTeam(rawTeam, ours) {
   return result;
 }
 
-function restoreState() {
-  let raw = null;
+function readStorage(key) {
   try {
-    const text = localStorage.getItem(STORAGE_KEY);
-    if (text) {
-      raw = JSON.parse(text);
-    }
+    const text = localStorage.getItem(key);
+    return text ? JSON.parse(text) : null;
   } catch (error) {
-    raw = null;
+    return null;
   }
+}
 
+function sanitizeBattle(raw) {
+  if (!raw || typeof raw !== "object") {
+    return freshBattle();
+  }
+  return {
+    initial:
+      raw.initial && typeof raw.initial === "object" ? raw.initial : null,
+    turns: Array.isArray(raw.turns) ? raw.turns : [],
+    result:
+      raw.result && typeof raw.result === "object" ? raw.result : null,
+    inference: null,
+  };
+}
+
+function findPetIndexByRef(name, form) {
+  const wantedForm = form || "";
+  for (let index = 0; index < meta.pets.length; index += 1) {
+    const pet = meta.pets[index];
+    if (pet.name === name && (pet.form || "") === wantedForm) {
+      return index;
+    }
+  }
+  return findPetIndex(name);
+}
+
+function teamFromBattleInitial(initial) {
+  const ourTeam = Array(6).fill(null);
+  const oppTeam = Array(6).fill(null);
+  if (!initial || typeof initial !== "object") {
+    return { ourTeam, oppTeam, activeOur: 0, activeOpp: 0 };
+  }
+  const ourRaw = Array.isArray(initial.our_team) ? initial.our_team : [];
+  const oppRaw = Array.isArray(initial.opponent_team) ? initial.opponent_team : [];
+  for (let index = 0; index < 6; index += 1) {
+    const item = ourRaw[index];
+    if (item && typeof item === "object" && item.pet) {
+      const petIndex = findPetIndexByRef(item.pet, item.form);
+      if (petIndex >= 0) {
+        const slot = freshOurSlot(petIndex);
+        if (meta.natures.some((nature) => nature.name === item.nature)) {
+          slot.nature = item.nature;
+        }
+        slot.talents = sanitizeTalents(item.talents);
+        slot.skills = filterSkills(
+          petIndex,
+          Array.isArray(item.skills) ? item.skills : []
+        ).slice(0, 4);
+        slot.currentHp = null;
+        ourTeam[index] = slot;
+      }
+    }
+    const oppItem = oppRaw[index];
+    if (oppItem && typeof oppItem === "object" && oppItem.pet) {
+      const petIndex = findPetIndexByRef(oppItem.pet, oppItem.form);
+      if (petIndex >= 0) {
+        const slot = freshOppSlot(petIndex);
+        const skills = Array.isArray(oppItem.suspected_skills)
+          ? oppItem.suspected_skills
+          : oppItem.skills;
+        slot.skills = filterSkills(
+          petIndex,
+          Array.isArray(skills) ? skills : []
+        );
+        oppTeam[index] = slot;
+      }
+    }
+  }
+  return {
+    ourTeam,
+    oppTeam,
+    activeOur: safeSlotIndex(initial.active_our),
+    activeOpp: safeSlotIndex(initial.active_opp),
+  };
+}
+
+function initialFromTeamConfig() {
+  const activeOur = safeSlotIndex(state.activeOur);
+  const activeOpp = safeSlotIndex(state.activeOpp);
+  if (!state.ourTeam[activeOur]) {
+    throw new Error("请先在我方选择一个首发精灵。");
+  }
+  if (!state.oppTeam[activeOpp]) {
+    throw new Error("请先在对方选择一个首发精灵。");
+  }
+  const ourTeam = state.ourTeam.map((slot) => {
+    if (!slot) {
+      return null;
+    }
+    const pet = meta.pets[slot.petIndex];
+    return {
+      pet: pet.name,
+      form: pet.form || "",
+      nature: slot.nature,
+      talents: slot.talents,
+      skills: slot.skills.map((name) => name),
+      energy: 10,
+      max_energy: 10,
+    };
+  });
+  const opponentTeam = state.oppTeam.map((slot) => {
+    if (!slot) {
+      return null;
+    }
+    const pet = meta.pets[slot.petIndex];
+    return {
+      pet: pet.name,
+      form: pet.form || "",
+      suspected_skills: slot.skills.map((name) => name),
+      energy: 10,
+      max_energy: 10,
+    };
+  });
+  return {
+    our_team: ourTeam,
+    opponent_team: opponentTeam,
+    active_our: activeOur,
+    active_opp: activeOpp,
+    magic_points: { our: 4, opp: 4 },
+  };
+}
+
+function zeroBuffSet() {
+  return {
+    temporary: zeroBuffs(),
+    permanent: zeroBuffs(),
+  };
+}
+
+function initialSnapshotFromInitial(initial) {
+  const ourPets = Array(6).fill(null);
+  const oppPets = Array(6).fill(null);
+  const ourRaw = Array.isArray(initial.our_team) ? initial.our_team : [];
+  const oppRaw = Array.isArray(initial.opponent_team) ? initial.opponent_team : [];
+  for (let index = 0; index < 6; index += 1) {
+    if (ourRaw[index]) {
+      const maxHp =
+        latestTeamResult &&
+        latestTeamResult.our_team &&
+        latestTeamResult.our_team[index] &&
+        latestTeamResult.our_team[index].max_hp
+          ? latestTeamResult.our_team[index].max_hp
+          : 1;
+      ourPets[index] = {
+        hp: maxHp,
+        max_hp: maxHp,
+        energy: ourRaw[index].energy ?? 10,
+        max_energy: ourRaw[index].max_energy ?? 10,
+        buffs: zeroBuffSet(),
+        statuses: [],
+      };
+    }
+    if (oppRaw[index]) {
+      oppPets[index] = {
+        hp_percent: 100,
+        energy: oppRaw[index].energy ?? 10,
+        max_energy: oppRaw[index].max_energy ?? 10,
+        buffs: zeroBuffSet(),
+        statuses: [],
+      };
+    }
+  }
+  return {
+    active_our: safeSlotIndex(initial.active_our),
+    active_opp: safeSlotIndex(initial.active_opp),
+    weather: null,
+    our_marks: { positive: null, negative: null },
+    opp_marks: { positive: null, negative: null },
+    magic_points: { our: 4, opp: 4 },
+    our_pets: ourPets,
+    opp_pets: oppPets,
+  };
+}
+
+function currentBattleSnapshot() {
+  if (
+    state.battle.inference &&
+    state.battle.inference.snapshot
+  ) {
+    return state.battle.inference.snapshot;
+  }
+  if (
+    state.battle.inference &&
+    state.battle.inference.initial_snapshot &&
+    state.battle.turns.length === 0
+  ) {
+    return state.battle.inference.initial_snapshot;
+  }
+  if (state.battle.initial) {
+    return initialSnapshotFromInitial(state.battle.initial);
+  }
+  if (battleDraft) {
+    return battleDraft;
+  }
+  return null;
+}
+
+function restoreState() {
+  const raw = readStorage(STORAGE_KEY) || readStorage(OLD_STORAGE_KEY);
   if (!raw || typeof raw !== "object") {
     state = defaultState();
     return;
   }
 
-  const savedRecords = sanitizeRecords(raw.records, raw.nextRecordId);
+  const battle = sanitizeBattle(raw.battle);
+  const fromInitial = battle.initial
+    ? teamFromBattleInitial(battle.initial)
+    : null;
   state = {
     weather: raw.weather === "雨天" ? "雨天" : "",
-    activeOur: safeSlotIndex(raw.activeOur),
-    activeOpp: safeSlotIndex(raw.activeOpp),
-    ourTeam: sanitizeTeam(raw.ourTeam, true),
-    oppTeam: sanitizeTeam(raw.oppTeam, false),
-    records: savedRecords.records,
-    nextRecordId: savedRecords.nextRecordId,
+    activeOur: fromInitial
+      ? fromInitial.activeOur
+      : safeSlotIndex(raw.activeOur),
+    activeOpp: fromInitial
+      ? fromInitial.activeOpp
+      : safeSlotIndex(raw.activeOpp),
+    ourTeam: fromInitial
+      ? fromInitial.ourTeam
+      : sanitizeTeam(raw.ourTeam, true),
+    oppTeam: fromInitial
+      ? fromInitial.oppTeam
+      : sanitizeTeam(raw.oppTeam, false),
+    records: [],
+    nextRecordId: 1,
+    battle,
   };
 }
 
@@ -554,7 +786,14 @@ function saveState() {
     return;
   }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const saved = {
+      ...state,
+      battle: {
+        ...state.battle,
+        inference: null,
+      },
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
   } catch (error) {
     // 浏览器存储过期或空间不足时，页面仍然可以正常计算。
   }
@@ -611,7 +850,6 @@ function changePet(side, index, value) {
   }
   setSlot(side, index, next);
   rerenderSlot(side, index, true);
-  updateRecordForm();
   scheduleCalculate();
 }
 
@@ -919,6 +1157,18 @@ function buildSlotCard(side, index, open) {
   card.append(head);
 
   card.append(element("div", "slot-summary", "等待计算…"));
+
+  if (battleStarted()) {
+    card.classList.add("locked");
+    card.append(
+      element(
+        "p",
+        "battle-lock-line",
+        "对局已开始，初始队伍锁定；要修改请先清空对局。"
+      )
+    );
+    return card;
+  }
 
   const details = document.createElement("details");
   details.open = active || Boolean(open);
@@ -1583,6 +1833,15 @@ function updateSlotSummaries(data) {
             `生命 ${rangeText(entry.current_hp)} / ${numberText(entry.max_hp)}`
           )
         );
+        if (entry.energy !== undefined && entry.energy !== null) {
+          box.append(
+            element(
+              "div",
+              "summary-line",
+              `能量 ${numberText(entry.energy)} / ${numberText(entry.max_energy)}`
+            )
+          );
+        }
         box.append(
           element(
             "div",
@@ -1601,6 +1860,15 @@ function updateSlotSummaries(data) {
             `剩余 ${rangeText(entry.current_hp_percent, "%")} · 生命 ${rangeText(entry.current_hp)}`
           )
         );
+        if (entry.energy !== undefined && entry.energy !== null) {
+          box.append(
+            element(
+              "div",
+              "summary-line",
+              `能量 ${numberText(entry.energy)} / ${numberText(entry.max_energy)}`
+            )
+          );
+        }
         box.append(
           element(
             "div",
@@ -1629,6 +1897,17 @@ function updateSlotSummaries(data) {
             )
           );
         }
+      }
+      if (Array.isArray(entry.statuses) && entry.statuses.length) {
+        box.append(
+          element(
+            "div",
+            "summary-line summary-statuses",
+            `状态：${entry.statuses
+              .map((status) => `${status.name} ${status.layers} 层`)
+              .join("、")}`
+          )
+        );
       }
     }
   }
@@ -1848,8 +2127,1694 @@ function renderActive(active, data) {
   );
 }
 
+const BATTLE_POSITIVE_MARKS = [
+  "攻击印记", "光合印记", "湿润印记", "蓄电印记",
+  "风起印记", "蓄势印记", "龙噬印记", "萌芽印记",
+];
+const BATTLE_NEGATIVE_MARKS = [
+  "中毒印记", "棘刺印记", "降灵印记", "减速印记",
+  "星陨印记", "暗涌印记",
+];
+const BATTLE_TEMP_STATUSES = ["中毒", "灼烧", "寄生", "禁足"];
+const BATTLE_PERM_STATUSES = ["冻结", "萌化", "引电"];
+const BATTLE_WEATHER_OPTIONS = ["雨天", "沙暴", "暴风雪", "雷鸣", "霞光梦境"];
+const BATTLE_HP_REASONS = [
+  ["heal", "回血"],
+  ["recoil", "反伤/自损"],
+  ["weather", "天气伤害"],
+  ["status", "状态伤害"],
+  ["starfall", "星陨伤害"],
+  ["switch_effect", "换人/印记效果"],
+  ["other", "其他"],
+];
+
+function setBattleStatus(text, isError = false) {
+  const node = $("battle-status");
+  if (!node) {
+    return;
+  }
+  node.textContent = text || "";
+  node.classList.toggle("error", Boolean(isError));
+  node.hidden = !text;
+}
+
+function battleSideText(side) {
+  return side === "our" ? "我方" : "对方";
+}
+
+function battleActionText(action) {
+  if (!action) {
+    return "空";
+  }
+  if (action.type === "switch") {
+    return `切换到第 ${action.to_slot + 1} 只`;
+  }
+  if (action.type === "charge") {
+    return "聚能";
+  }
+  return `使用 ${action.skill}`;
+}
+
+function battleStatusListText(statuses) {
+  if (!Array.isArray(statuses) || !statuses.length) {
+    return "";
+  }
+  return statuses.map((status) => `${status.name}:${status.layers}`).join(",");
+}
+
+function parseBattleStatusText(text, label) {
+  const result = [];
+  const seen = new Set();
+  for (const part of String(text || "").split(/[，,]/)) {
+    const item = part.trim();
+    if (!item) {
+      continue;
+    }
+    const match = item.match(/^([^:：]+)[:：](\d+)$/);
+    if (!match) {
+      throw new Error(`${label}的状态要写成“中毒:2,灼烧:1”这种格式。`);
+    }
+    const name = match[1].trim();
+    const layers = Number(match[2]);
+    if (!BATTLE_TEMP_STATUSES.includes(name) && !BATTLE_PERM_STATUSES.includes(name)) {
+      throw new Error(`${label}的状态“${name}”不认识。`);
+    }
+    if (seen.has(name)) {
+      throw new Error(`${label}的状态“${name}”重复了。`);
+    }
+    seen.add(name);
+    if (layers > 0) {
+      result.push({ name, layers });
+    }
+  }
+  return result;
+}
+
+function battleSideEntries(snapshot, side) {
+  return side === "our" ? snapshot.our_pets : snapshot.opp_pets;
+}
+
+function battleEntry(snapshot, side, slot) {
+  return battleSideEntries(snapshot, side)[slot] || null;
+}
+
+function battlePetName(side, slot) {
+  const team = side === "our" ? state.ourTeam : state.oppTeam;
+  const slotData = team[slot];
+  if (!slotData) {
+    return `第 ${slot + 1} 只`;
+  }
+  return petLabel(meta.pets[slotData.petIndex]);
+}
+
+function battlePetMaxHp(side, slot) {
+  if (side === "our") {
+    const entry = battleDraft && battleDraft.our_pets[slot];
+    if (entry && entry.max_hp) {
+      return entry.max_hp;
+    }
+    if (
+      latestTeamResult &&
+      latestTeamResult.our_team &&
+      latestTeamResult.our_team[slot] &&
+      latestTeamResult.our_team[slot].max_hp
+    ) {
+      return latestTeamResult.our_team[slot].max_hp;
+    }
+  }
+  return null;
+}
+
+function battleTeamSignature() {
+  const ours = state.ourTeam.map((slot) =>
+    slot
+      ? [slot.petIndex, slot.nature, slot.talents, slot.skills]
+      : null
+  );
+  const opps = state.oppTeam.map((slot) =>
+    slot ? [slot.petIndex, slot.skills] : null
+  );
+  const maxHp = latestTeamResult
+    ? latestTeamResult.our_team.map((entry) =>
+        entry && entry.configured ? entry.max_hp : null
+      )
+    : null;
+  return JSON.stringify({
+    ours,
+    opps,
+    activeOur: state.activeOur,
+    activeOpp: state.activeOpp,
+    maxHp,
+  });
+}
+
+function battlePreSnapshot() {
+  if (battleStarted()) {
+    return currentBattleSnapshot();
+  }
+  return battlePreBase;
+}
+
+function battlePreSlots() {
+  const snapshot = battlePreSnapshot();
+  if (!snapshot) {
+    return null;
+  }
+  return {
+    snapshot,
+    our: snapshot.active_our,
+    opp: snapshot.active_opp,
+  };
+}
+
+function battleEntryForContext(snapshot, side, slot) {
+  const entry = battleEntry(snapshot, side, slot);
+  if (!entry) {
+    return null;
+  }
+  return {
+    slot,
+    hp: side === "our" ? entry.hp : undefined,
+    hp_percent: side === "opp" ? entry.hp_percent : undefined,
+    energy: entry.energy,
+    max_energy: entry.max_energy,
+    buffs: clone(entry.buffs || zeroBuffSet()),
+    statuses: clone(entry.statuses || []),
+  };
+}
+
+function battleContextFromSnapshot(snapshot, sourceSide, sourceSlot, targetSide, targetSlot) {
+  const ourSlot = sourceSide === "our" ? sourceSlot : targetSlot;
+  const oppSlot = sourceSide === "theirs" ? sourceSlot : targetSlot;
+  return {
+    weather: snapshot.weather ? clone(snapshot.weather) : null,
+    our_marks: clone(snapshot.our_marks || { positive: null, negative: null }),
+    opp_marks: clone(snapshot.opp_marks || { positive: null, negative: null }),
+    our_active: battleEntryForContext(snapshot, "our", ourSlot),
+    opp_active: battleEntryForContext(snapshot, "opp", oppSlot),
+  };
+}
+
+function battleActionCategory(skillName) {
+  const info = actionSkillByName.get(skillName);
+  return info ? info.category : null;
+}
+
+function battleActionInfo(skillName) {
+  return actionSkillByName.get(skillName) || null;
+}
+
+function battleTurnActiveSlots() {
+  const pre = battlePreSlots();
+  if (!pre) {
+    return null;
+  }
+  let our = pre.our;
+  let opp = pre.opp;
+  if ($("battle-our-action-type").value === "switch") {
+    our = Number($("battle-our-switch").value);
+  }
+  if ($("battle-opp-action-type").value === "switch") {
+    opp = Number($("battle-opp-switch").value);
+  }
+  return { our, opp, pre };
+}
+
+function syncBattleDamageEvents() {
+  const slots = battleTurnActiveSlots();
+  if (!slots) {
+    battleDraftDamageEvents = [];
+    return;
+  }
+  const previous = new Map(
+    battleDraftDamageEvents.map((event) => [
+      `${event.sourceSide}:${event.skill}`,
+      event,
+    ])
+  );
+  const next = [];
+  const ourType = $("battle-our-action-type").value;
+  const oppType = $("battle-opp-action-type").value;
+  if (ourType === "skill") {
+    const skill = $("battle-our-skill").value;
+    const info = battleActionInfo(skill);
+    if (info && info.category === "攻击") {
+      const old = previous.get(`our:${skill}`);
+      next.push(old || {
+        sourceSide: "our",
+        sourceSlot: slots.our,
+        targetSide: "theirs",
+        targetSlot: slots.opp,
+        skill,
+        totalDamage: "",
+        hits: 1,
+        hpAfter: "",
+        overkill: false,
+        ignore: false,
+      });
+    }
+  }
+  if (oppType === "skill") {
+    const skill = $("battle-opp-skill").value;
+    const info = battleActionInfo(skill);
+    if (info && info.category === "攻击") {
+      const old = previous.get(`theirs:${skill}`);
+      next.push(old || {
+        sourceSide: "theirs",
+        sourceSlot: slots.opp,
+        targetSide: "our",
+        targetSlot: slots.our,
+        skill,
+        totalDamage: "",
+        hits: 1,
+        hpAfter: "",
+        overkill: false,
+        ignore: false,
+      });
+    }
+  }
+  battleDraftDamageEvents = next;
+}
+
+function resetBattleDraft(snapshot) {
+  battleDraft = clone(snapshot);
+  battlePreBase = clone(snapshot);
+  battleDraftDamageEvents = [];
+  battleDraftHpEvents = [];
+  battleDraftReplacements = { our: null, opp: null };
+  battleStatusText = {};
+  for (const side of ["our", "opp"]) {
+    const entries = battleSideEntries(battleDraft, side);
+    for (let slot = 0; slot < 6; slot += 1) {
+      if (entries[slot]) {
+        battleStatusText[`${side}-${slot}`] = battleStatusListText(
+          entries[slot].statuses
+        );
+      }
+    }
+  }
+  battleDraftSig = battleTeamSignature();
+  syncBattleDamageEvents();
+}
+
+function ensureBattleDraft() {
+  if (battleStarted()) {
+    if (!battleDraft) {
+      const snapshot = battlePreSnapshot();
+      if (snapshot) {
+        resetBattleDraft(snapshot);
+      }
+    }
+    return battleDraft;
+  }
+  const signature = battleTeamSignature();
+  if (battleDraft && battleDraftSig === signature) {
+    return battleDraft;
+  }
+  try {
+    const initial = initialFromTeamConfig();
+    const snapshot = initialSnapshotFromInitial(initial);
+    resetBattleDraft(snapshot);
+  } catch (error) {
+    battleDraft = null;
+  }
+  return battleDraft;
+}
+
+function populateSelect(select, options, selected) {
+  select.replaceChildren();
+  for (const [value, label] of options) {
+    const option = document.createElement("option");
+    option.value = String(value);
+    option.textContent = label;
+    select.append(option);
+  }
+  if (selected !== undefined && selected !== null) {
+    select.value = String(selected);
+  }
+}
+
+function configuredSlots(side) {
+  const team = side === "our" ? state.ourTeam : state.oppTeam;
+  return team
+    .map((slot, index) => (slot ? index : null))
+    .filter((index) => index !== null);
+}
+
+function slotOptions(side, includeNone = false) {
+  const options = includeNone ? [["", "不补位"]] : [];
+  for (const slot of configuredSlots(side)) {
+    options.push([slot, `第 ${slot + 1} 只 · ${battlePetName(side, slot)}`]);
+  }
+  return options;
+}
+
+function aliveBenchOptions(side, activeSlot, snapshot) {
+  const entries = battleSideEntries(snapshot, side);
+  const options = [];
+  for (const slot of configuredSlots(side)) {
+    if (slot === activeSlot) {
+      continue;
+    }
+    const entry = entries[slot];
+    if (!entry) {
+      continue;
+    }
+    const hp = side === "our" ? entry.hp : entry.hp_percent;
+    if (hp > 0) {
+      options.push([slot, `第 ${slot + 1} 只 · ${battlePetName(side, slot)}`]);
+    }
+  }
+  return options;
+}
+
+function battleOppSkillOptions(activeSlot) {
+  const names = new Set();
+  const slot = state.oppTeam[activeSlot];
+  if (slot) {
+    for (const name of slot.skills) {
+      names.add(name);
+    }
+  }
+  const inference = state.battle.inference;
+  if (inference && inference.opponent_team && inference.opponent_team[activeSlot]) {
+    for (const name of inference.opponent_team[activeSlot].observed_skills || []) {
+      names.add(name);
+    }
+  }
+  if (
+    slot &&
+    meta.pets[slot.petIndex] &&
+    Array.isArray(meta.pets[slot.petIndex].action_skills)
+  ) {
+    for (const name of meta.pets[slot.petIndex].action_skills) {
+      names.add(name);
+    }
+  }
+  if ($("battle-show-all-opp-skills").checked) {
+    for (const skill of meta.action_skills) {
+      names.add(skill.name);
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+function renderBattleCurrent(pre) {
+  const box = $("battle-current");
+  box.replaceChildren();
+  if (!pre) {
+    box.append(element("p", "empty-note", "先在上方配置双方首发精灵。"));
+    return;
+  }
+  for (const side of ["our", "opp"]) {
+    const slot = side === "our" ? pre.our : pre.opp;
+    const entry = battleEntry(pre.snapshot, side, slot);
+    const line = element("div", `battle-current-side ${side}`);
+    const team = side === "our" ? state.ourTeam : state.oppTeam;
+    const pet = team[slot] ? meta.pets[team[slot].petIndex] : null;
+    if (pet) {
+      line.append(thumb(pet.avatar, pet.name, "battle-current-avatar"));
+    }
+    line.append(
+      element(
+        "strong",
+        "",
+        `${side === "our" ? "我方" : "对方"}：${battlePetName(side, slot)}`
+      )
+    );
+    if (entry) {
+      const hpText =
+        side === "our"
+          ? `生命 ${numberText(entry.hp)} / ${numberText(entry.max_hp)}`
+          : `剩余 ${numberText(entry.hp_percent)}%`;
+      line.append(
+        element(
+          "span",
+          "battle-current-meta",
+          `${hpText} · 能量 ${numberText(entry.energy)} / ${numberText(entry.max_energy)}`
+        )
+      );
+    }
+    box.append(line);
+  }
+}
+
+function renderBattleActionSelectors(pre) {
+  if (!pre) {
+    return;
+  }
+  const ourSlot = pre.our;
+  const oppSlot = pre.opp;
+  const ourSlotData = state.ourTeam[ourSlot];
+  const ourSkillNames = ourSlotData ? ourSlotData.skills : [];
+  const ourOptions = [["", "— 选择技能 —"]].concat(
+    ourSkillNames.map((name) => [name, skillLabel(name)])
+  );
+  const currentOurSkill = $("battle-our-skill").value;
+  populateSelect(
+    $("battle-our-skill"),
+    ourOptions,
+    ourSkillNames.includes(currentOurSkill) ? currentOurSkill : ""
+  );
+
+  const oppNames = battleOppSkillOptions(oppSlot);
+  const currentOppSkill = $("battle-opp-skill").value;
+  const oppOptions = [["", "— 选择技能 —"]].concat(
+    oppNames.map((name) => [name, skillLabel(name)])
+  );
+  populateSelect(
+    $("battle-opp-skill"),
+    oppOptions,
+    oppNames.includes(currentOppSkill) ? currentOppSkill : ""
+  );
+
+  const ourSwitchOptions = [["", "— 选择切换目标 —"]].concat(
+    aliveBenchOptions("our", ourSlot, pre.snapshot)
+  );
+  const currentOurSwitch = $("battle-our-switch").value;
+  populateSelect(
+    $("battle-our-switch"),
+    ourSwitchOptions,
+    ourSwitchOptions.some(([value]) => String(value) === currentOurSwitch)
+      ? currentOurSwitch
+      : ""
+  );
+
+  const oppSwitchOptions = [["", "— 选择切换目标 —"]].concat(
+    aliveBenchOptions("opp", oppSlot, pre.snapshot)
+  );
+  const currentOppSwitch = $("battle-opp-switch").value;
+  populateSelect(
+    $("battle-opp-switch"),
+    oppSwitchOptions,
+    oppSwitchOptions.some(([value]) => String(value) === currentOppSwitch)
+      ? currentOppSwitch
+      : ""
+  );
+
+  const ourIntended = [["", "— 不确定 —"]].concat(
+    ourSkillNames.map((name) => [name, skillLabel(name)])
+  );
+  const currentOurIntended = $("battle-our-intended-skill").value;
+  populateSelect(
+    $("battle-our-intended-skill"),
+    ourIntended,
+    ourSkillNames.includes(currentOurIntended) ? currentOurIntended : ""
+  );
+
+  const oppIntended = [["", "— 不确定 —"]].concat(
+    oppNames.map((name) => [name, skillLabel(name)])
+  );
+  const currentOppIntended = $("battle-opp-intended-skill").value;
+  populateSelect(
+    $("battle-opp-intended-skill"),
+    oppIntended,
+    oppNames.includes(currentOppIntended) ? currentOppIntended : ""
+  );
+
+  const ourType = $("battle-our-action-type").value;
+  const oppType = $("battle-opp-action-type").value;
+  $("battle-our-skill-field").hidden = ourType !== "skill";
+  $("battle-our-switch-field").hidden = ourType !== "switch";
+  $("battle-our-intended-field").hidden = ourType !== "none";
+  $("battle-opp-skill-field").hidden = oppType !== "skill";
+  $("battle-opp-switch-field").hidden = oppType !== "switch";
+  $("battle-opp-intended-field").hidden = oppType !== "none";
+}
+
+function battleResultText(result) {
+  if (!result || !result.winner) {
+    return "";
+  }
+  const winner =
+    result.winner === "our" ? "我方胜利" : result.winner === "opp" ? "对方胜利" : "平局";
+  const reasonMap = {
+    magic: "魔力值耗尽",
+    no_bench: "没有可上场精灵",
+    surrender: "投降/断线",
+  };
+  const reason = result.reason ? reasonMap[result.reason] || result.reason : "";
+  return reason ? `对局结束：${winner}（${reason}）` : `对局结束：${winner}`;
+}
+
+function renderBattleCard() {
+  const resultBox = $("battle-result");
+  if (resultBox) {
+    const text = battleResultText(
+      (state.battle.inference && state.battle.inference.result) ||
+        state.battle.result
+    );
+    resultBox.textContent = text;
+    resultBox.hidden = !text;
+  }
+  const lock = $("battle-lock-note");
+  if (lock) {
+    if (battleStarted()) {
+      lock.hidden = false;
+      lock.textContent =
+        "对局已开始：初始队伍锁定。要修改队伍，请先点“清空对局”。";
+    } else {
+      lock.hidden = true;
+    }
+  }
+  const draft = ensureBattleDraft();
+  const pre = battlePreSlots();
+  renderBattleCurrent(pre);
+  renderBattleActionSelectors(pre);
+  if (!draft || !pre) {
+    $("battle-damage-events").replaceChildren(
+      element("p", "empty-note", "先在上方配置双方首发精灵。")
+    );
+    $("battle-hp-events").replaceChildren();
+    $("battle-snapshot-editor").replaceChildren(
+      element("p", "empty-note", "先配置队伍。")
+    );
+    $("battle-turn-list").replaceChildren();
+    return;
+  }
+  syncBattleDamageEvents();
+  renderBattleDamageEvents();
+  renderBattleHpEvents();
+  renderBattleSnapshotEditor();
+  renderBattleTurnList();
+  renderBattleWarnings();
+}
+
+function renderBattleDamageEvents() {
+  const box = $("battle-damage-events");
+  box.replaceChildren();
+  if (!battleDraftDamageEvents.length) {
+    box.append(
+      element(
+        "p",
+        "empty-note",
+        "本回合没有攻击技能伤害。防御/状态技能造成的伤害可以加到“生命变化事件”。"
+      )
+    );
+    return;
+  }
+  battleDraftDamageEvents.forEach((event, index) => {
+    const card = element("div", "battle-event-card");
+    const title = element(
+      "div",
+      "battle-event-title",
+      `${battleSideText(event.sourceSide)} ${battlePetName(
+        event.sourceSide,
+        event.sourceSlot
+      )} 使用 ${event.skill} → ${battleSideText(
+        event.targetSide
+      )} ${battlePetName(event.targetSide, event.targetSlot)}`
+    );
+    card.append(title);
+
+    const row = element("div", "record-field-pair");
+    const damage = document.createElement("input");
+    damage.type = "number";
+    damage.min = "0";
+    damage.step = "1";
+    damage.placeholder = "总伤害";
+    damage.value = event.totalDamage;
+    damage.addEventListener("input", () => {
+      event.totalDamage = damage.value;
+    });
+    row.append(field("总伤害", damage));
+
+    const hits = document.createElement("input");
+    hits.type = "number";
+    hits.min = "1";
+    hits.max = "99";
+    hits.step = "1";
+    hits.value = event.hits;
+    hits.addEventListener("input", () => {
+      event.hits = hits.value;
+    });
+    row.append(field("连击数", hits));
+
+    const hpAfter = document.createElement("input");
+    hpAfter.type = "number";
+    hpAfter.min = "0";
+    hpAfter.max = event.targetSide === "theirs" ? "100" : "99999";
+    hpAfter.step = "1";
+    hpAfter.placeholder =
+      event.targetSide === "theirs" ? "对方剩（%）" : "我方剩（具体生命）";
+    hpAfter.value = event.hpAfter;
+    hpAfter.addEventListener("input", () => {
+      event.hpAfter = hpAfter.value;
+    });
+    row.append(
+      field(
+        event.targetSide === "theirs" ? "对方行动后剩（%）" : "我方行动后剩",
+        hpAfter
+      )
+    );
+    card.append(row);
+
+    const options = element("div", "battle-event-options");
+    const overkill = document.createElement("input");
+    overkill.type = "checkbox";
+    overkill.checked = event.overkill;
+    overkill.addEventListener("change", () => {
+      event.overkill = overkill.checked;
+    });
+    options.append(
+      field("伤害超过剩余生命（溢出）", overkill)
+    );
+
+    const ignore = document.createElement("input");
+    ignore.type = "checkbox";
+    ignore.checked = event.ignore;
+    ignore.addEventListener("change", () => {
+      event.ignore = ignore.checked;
+    });
+    options.append(
+      field("不参与推断（状态复杂/未建模）", ignore)
+    );
+    card.append(options);
+    box.append(card);
+  });
+}
+
+function hpEventTargetOptions(side) {
+  return slotOptions(side).map(([value, label]) => [String(value), label]);
+}
+
+function renderBattleHpEvents() {
+  const box = $("battle-hp-events");
+  box.replaceChildren();
+  if (!battleDraftHpEvents.length) {
+    box.append(
+      element("p", "empty-note", "没有回血、掉血、天气或状态伤害时可以留空。")
+    );
+    return;
+  }
+  battleDraftHpEvents.forEach((event, index) => {
+    const card = element("div", "battle-event-card");
+    const row = element("div", "record-field-pair");
+    const sideSelect = document.createElement("select");
+    populateSelect(
+      sideSelect,
+      [["our", "我方"], ["theirs", "对方"]],
+      event.targetSide
+    );
+    sideSelect.addEventListener("change", () => {
+      event.targetSide = sideSelect.value;
+      event.targetSlot = configuredSlots(
+        event.targetSide === "our" ? "our" : "opp"
+      )[0] ?? 0;
+      renderBattleHpEvents();
+    });
+    row.append(field("哪一方", sideSelect));
+
+    const slotSelect = document.createElement("select");
+    populateSelect(
+      slotSelect,
+      hpEventTargetOptions(event.targetSide === "our" ? "our" : "opp"),
+      event.targetSlot
+    );
+    slotSelect.addEventListener("change", () => {
+      event.targetSlot = Number(slotSelect.value);
+    });
+    row.append(field("哪只精灵", slotSelect));
+    card.append(row);
+
+    const second = element("div", "record-field-pair");
+    const reasonSelect = document.createElement("select");
+    populateSelect(reasonSelect, BATTLE_HP_REASONS, event.reason);
+    reasonSelect.addEventListener("change", () => {
+      event.reason = reasonSelect.value;
+    });
+    second.append(field("原因", reasonSelect));
+
+    const amount = document.createElement("input");
+    amount.type = "number";
+    amount.step = "1";
+    amount.placeholder = "回血填正数，掉血填负数；可不填";
+    amount.value = event.amount;
+    amount.addEventListener("input", () => {
+      event.amount = amount.value;
+    });
+    second.append(field("实际变化量（可选）", amount));
+    card.append(second);
+
+    const hpAfter = document.createElement("input");
+    hpAfter.type = "number";
+    hpAfter.min = "0";
+    hpAfter.max = event.targetSide === "theirs" ? "100" : "99999";
+    hpAfter.step = "1";
+    hpAfter.value = event.hpAfter;
+    hpAfter.placeholder =
+      event.targetSide === "theirs" ? "变化后剩（%）" : "变化后具体生命";
+    hpAfter.addEventListener("input", () => {
+      event.hpAfter = hpAfter.value;
+    });
+    card.append(
+      field(
+        event.targetSide === "theirs"
+          ? "变化后对方剩（%）"
+          : "变化后我方生命",
+        hpAfter
+      )
+    );
+
+    const remove = element("button", "btn btn-small btn-danger", "删除这条");
+    remove.type = "button";
+    remove.addEventListener("click", () => {
+      battleDraftHpEvents.splice(index, 1);
+      renderBattleHpEvents();
+    });
+    card.append(remove);
+    box.append(card);
+  });
+}
+
+function buildMarkEditor(side, kind, labelText) {
+  const key = `${side}_marks`;
+  const wrapper = element("div", "battle-mark-editor");
+  wrapper.append(element("span", "field-title", labelText));
+  const select = document.createElement("select");
+  const names = kind === "positive" ? BATTLE_POSITIVE_MARKS : BATTLE_NEGATIVE_MARKS;
+  populateSelect(
+    select,
+    [["", "无"]].concat(names.map((name) => [name, name])),
+    (battleDraft[key] && battleDraft[key][kind] && battleDraft[key][kind].name) || ""
+  );
+  const layers = document.createElement("input");
+  layers.type = "number";
+  layers.min = "0";
+  layers.max = "99";
+  layers.step = "1";
+  layers.placeholder = "层数";
+  layers.value =
+    battleDraft[key] && battleDraft[key][kind]
+      ? String(battleDraft[key][kind].layers)
+      : "0";
+  layers.disabled = !select.value;
+  select.addEventListener("change", () => {
+    if (!select.value) {
+      battleDraft[key][kind] = null;
+      layers.disabled = true;
+      layers.value = "0";
+    } else {
+      const old = battleDraft[key][kind];
+      const value = Number(layers.value) || 1;
+      battleDraft[key][kind] = {
+        name: select.value,
+        layers: old && old.name === select.value ? old.layers : value,
+      };
+      layers.disabled = false;
+      layers.value = String(battleDraft[key][kind].layers);
+    }
+  });
+  layers.addEventListener("input", () => {
+    if (!select.value) {
+      return;
+    }
+    const value = Math.max(0, Math.min(99, Number(layers.value) || 0));
+    if (value === 0) {
+      battleDraft[key][kind] = null;
+      select.value = "";
+      layers.disabled = true;
+      return;
+    }
+    battleDraft[key][kind] = { name: select.value, layers: value };
+  });
+  wrapper.append(select, layers);
+  return wrapper;
+}
+
+function buildBuffGrid(side, slot, type) {
+  const entry = battleEntry(battleDraft, side, slot);
+  const grid = element("div", "battle-buff-grid");
+  for (const key of BUFF_KEYS) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "-99";
+    input.max = "99";
+    input.step = "1";
+    input.value = String(entry.buffs[type][key] || 0);
+    input.addEventListener("input", () => {
+      const value = Math.max(-99, Math.min(99, Number(input.value) || 0));
+      entry.buffs[type][key] = value;
+    });
+    grid.append(field(STAT_NAMES[key], input));
+  }
+  return grid;
+}
+
+function buildPetSnapshotRow(side, slot) {
+  const entry = battleEntry(battleDraft, side, slot);
+  const card = element("div", "battle-snapshot-pet");
+  const head = element("div", "battle-snapshot-pet-head");
+  const team = side === "our" ? state.ourTeam : state.oppTeam;
+  const pet = team[slot] ? meta.pets[team[slot].petIndex] : null;
+  if (pet) {
+    head.append(thumb(pet.avatar, pet.name, "battle-snapshot-avatar"));
+  }
+  head.append(
+    element(
+      "strong",
+      "",
+      `${battleSideText(side)} 第 ${slot + 1} 只 · ${battlePetName(side, slot)}`
+    )
+  );
+  card.append(head);
+
+  const row = element("div", "record-field-pair");
+  const hp = document.createElement("input");
+  hp.type = "number";
+  hp.min = "0";
+  hp.step = "1";
+  if (side === "our") {
+    hp.max = String(entry.max_hp);
+    hp.value = String(entry.hp);
+  } else {
+    hp.max = "100";
+    hp.value = String(entry.hp_percent);
+  }
+  hp.addEventListener("input", () => {
+    if (side === "our") {
+      entry.hp = Math.max(0, Math.min(entry.max_hp, Number(hp.value) || 0));
+    } else {
+      entry.hp_percent = Math.max(0, Math.min(100, Number(hp.value) || 0));
+    }
+  });
+  row.append(field(side === "our" ? "生命" : "生命百分比", hp));
+
+  const energy = document.createElement("input");
+  energy.type = "number";
+  energy.min = "0";
+  energy.max = String(entry.max_energy);
+  energy.step = "1";
+  energy.value = String(entry.energy);
+  energy.addEventListener("input", () => {
+    entry.energy = Math.max(
+      0,
+      Math.min(entry.max_energy, Number(energy.value) || 0)
+    );
+  });
+  row.append(field("能量", energy));
+  card.append(row);
+
+  const details = document.createElement("details");
+  details.append(element("summary", "configure-summary", "增减益 / 状态"));
+  const body = element("div", "battle-snapshot-advanced");
+  body.append(element("div", "field-title", "非永久增减益（离场消失）"));
+  body.append(buildBuffGrid(side, slot, "temporary"));
+  body.append(element("div", "field-title", "永久增减益（离场保留）"));
+  body.append(buildBuffGrid(side, slot, "permanent"));
+
+  const statusKey = `${side}-${slot}`;
+  const statusInput = document.createElement("input");
+  statusInput.type = "text";
+  statusInput.placeholder = "中毒:2,灼烧:1";
+  statusInput.value = battleStatusText[statusKey] || "";
+  statusInput.addEventListener("input", () => {
+    battleStatusText[statusKey] = statusInput.value;
+    try {
+      entry.statuses = parseBattleStatusText(
+        statusInput.value,
+        battlePetName(side, slot)
+      );
+      statusInput.classList.remove("invalid");
+    } catch (error) {
+      statusInput.classList.add("invalid");
+    }
+  });
+  body.append(field("状态（逗号分隔）", statusInput));
+  details.append(body);
+  card.append(details);
+  return card;
+}
+
+function renderBattleSnapshotEditor() {
+  const box = $("battle-snapshot-editor");
+  box.replaceChildren();
+  if (!battleDraft) {
+    return;
+  }
+
+  const afterRow = element("div", "battle-snapshot-top");
+  const ourActive = document.createElement("select");
+  populateSelect(
+    ourActive,
+    slotOptions("our"),
+    battleDraft.active_our
+  );
+  ourActive.addEventListener("change", () => {
+    battleDraft.active_our = Number(ourActive.value);
+  });
+  afterRow.append(field("回合结束我方场上", ourActive));
+
+  const oppActive = document.createElement("select");
+  populateSelect(
+    oppActive,
+    slotOptions("opp"),
+    battleDraft.active_opp
+  );
+  oppActive.addEventListener("change", () => {
+    battleDraft.active_opp = Number(oppActive.value);
+  });
+  afterRow.append(field("回合结束对方场上", oppActive));
+  box.append(afterRow);
+
+  const replacementRow = element("div", "battle-snapshot-top");
+  const ourReplacement = document.createElement("select");
+  populateSelect(
+    ourReplacement,
+    slotOptions("our", true),
+    battleDraftReplacements.our ?? ""
+  );
+  ourReplacement.addEventListener("change", () => {
+    battleDraftReplacements.our =
+      ourReplacement.value === "" ? null : Number(ourReplacement.value);
+  });
+  replacementRow.append(field("我方击倒补位", ourReplacement));
+
+  const oppReplacement = document.createElement("select");
+  populateSelect(
+    oppReplacement,
+    slotOptions("opp", true),
+    battleDraftReplacements.opp ?? ""
+  );
+  oppReplacement.addEventListener("change", () => {
+    battleDraftReplacements.opp =
+      oppReplacement.value === "" ? null : Number(oppReplacement.value);
+  });
+  replacementRow.append(field("对方击倒补位", oppReplacement));
+  box.append(replacementRow);
+
+  const fieldRow = element("div", "battle-snapshot-top");
+  const weatherSelect = document.createElement("select");
+  populateSelect(
+    weatherSelect,
+    [["", "无天气"]].concat(
+      BATTLE_WEATHER_OPTIONS.map((name) => [name, name])
+    ),
+    battleDraft.weather ? battleDraft.weather.type : ""
+  );
+  const weatherRemaining = document.createElement("input");
+  weatherRemaining.type = "number";
+  weatherRemaining.min = "0";
+  weatherRemaining.max = "99";
+  weatherRemaining.step = "1";
+  weatherRemaining.value = battleDraft.weather
+    ? String(battleDraft.weather.remaining)
+    : "0";
+  weatherRemaining.disabled = !weatherSelect.value;
+  weatherSelect.addEventListener("change", () => {
+    if (!weatherSelect.value) {
+      battleDraft.weather = null;
+      weatherRemaining.disabled = true;
+      weatherRemaining.value = "0";
+    } else {
+      battleDraft.weather = {
+        type: weatherSelect.value,
+        remaining: Number(weatherRemaining.value) || 0,
+      };
+      weatherRemaining.disabled = false;
+    }
+  });
+  weatherRemaining.addEventListener("input", () => {
+    if (battleDraft.weather) {
+      battleDraft.weather.remaining = Math.max(
+        0,
+        Number(weatherRemaining.value) || 0
+      );
+    }
+  });
+  fieldRow.append(field("天气", weatherSelect));
+  fieldRow.append(field("天气剩余回合", weatherRemaining));
+
+  const ourMagic = document.createElement("input");
+  ourMagic.type = "number";
+  ourMagic.min = "0";
+  ourMagic.max = "4";
+  ourMagic.step = "1";
+  ourMagic.value = String(battleDraft.magic_points.our);
+  ourMagic.addEventListener("input", () => {
+    battleDraft.magic_points.our = Math.max(
+      0,
+      Math.min(4, Number(ourMagic.value) || 0)
+    );
+  });
+  fieldRow.append(field("我方魔力值", ourMagic));
+
+  const oppMagic = document.createElement("input");
+  oppMagic.type = "number";
+  oppMagic.min = "0";
+  oppMagic.max = "4";
+  oppMagic.step = "1";
+  oppMagic.value = String(battleDraft.magic_points.opp);
+  oppMagic.addEventListener("input", () => {
+    battleDraft.magic_points.opp = Math.max(
+      0,
+      Math.min(4, Number(oppMagic.value) || 0)
+    );
+  });
+  fieldRow.append(field("对方魔力值", oppMagic));
+  box.append(fieldRow);
+  box.append(
+    element(
+      "p",
+      "hint",
+      "有精灵被击倒时，记得把对应一方的魔力值减 1；后台也会检查击倒数。"
+    )
+  );
+
+  const marksRow = element("div", "battle-marks-grid");
+  marksRow.append(buildMarkEditor("our", "positive", "我方正面印记"));
+  marksRow.append(buildMarkEditor("our", "negative", "我方负面印记"));
+  marksRow.append(buildMarkEditor("opp", "positive", "对方正面印记"));
+  marksRow.append(buildMarkEditor("opp", "negative", "对方负面印记"));
+  box.append(marksRow);
+
+  for (const side of ["our", "opp"]) {
+    const entries = battleSideEntries(battleDraft, side);
+    for (let slot = 0; slot < 6; slot += 1) {
+      if (entries[slot]) {
+        box.append(buildPetSnapshotRow(side, slot));
+      }
+    }
+  }
+}
+
+function renderBattleTurnList() {
+  const box = $("battle-turn-list");
+  box.replaceChildren();
+  const turns = state.battle.turns;
+  if (!turns.length) {
+    box.append(element("li", "empty-note", "还没有添加回合。"));
+    return;
+  }
+  const inferenceTurns =
+    state.battle.inference && Array.isArray(state.battle.inference.turns)
+      ? state.battle.inference.turns
+      : [];
+  turns.forEach((turn, index) => {
+    const item = element("li", "record-card");
+    const head = element("div", "record-head");
+    head.append(element("strong", "", `第 ${index + 1} 回合`));
+    const info = inferenceTurns[index];
+    head.append(
+      element(
+        "span",
+        "record-context",
+        `我方 ${battleActionText(turn.our_action)} · 对方 ${battleActionText(
+          turn.opp_action
+        )} · 先手 ${turn.who_first === "our" ? "我方" : "对方"}`
+      )
+    );
+    item.append(head);
+    if (info) {
+      item.append(
+        element(
+          "div",
+          "record-summary",
+          `应对 ${info.counter ? "是" : "否"} · 可推断速度 ${
+            info.speed_inferable ? "是" : "否"
+          }`
+        )
+      );
+      for (const event of info.events || []) {
+        const kind = event.type === "damage" ? "伤害" : "生命变化";
+        let text = event.matched
+          ? `${kind}：匹配成功`
+          : `${kind}：未匹配或未参与推断`;
+        if (event.matched && event.kept !== null && event.kept !== undefined) {
+          text += `，剩 ${numberText(event.kept)} 种`;
+        }
+        if (event.message) {
+          text += `；${event.message}`;
+        }
+        item.append(element("div", "record-result-text", text));
+      }
+      for (const warning of info.warnings || []) {
+        item.append(element("div", "record-warning", warning));
+      }
+    } else {
+      item.append(element("div", "record-context", "等待对局计算…"));
+    }
+    const remove = element(
+      "button",
+      "btn btn-small btn-danger record-delete",
+      "从这回合起重填"
+    );
+    remove.type = "button";
+    remove.addEventListener("click", () => {
+      deleteBattleFrom(index);
+    });
+    item.append(remove);
+    box.append(item);
+  });
+}
+
+function renderBattleWarnings() {
+  const box = $("battle-warnings");
+  if (!box) {
+    return;
+  }
+  const warnings =
+    state.battle.inference && Array.isArray(state.battle.inference.warnings)
+      ? state.battle.inference.warnings
+      : [];
+  box.replaceChildren();
+  if (!warnings.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.append(element("strong", "warning-title", "对局提示"));
+  const list = element("ul", "warning-list");
+  for (const text of warnings) {
+    list.append(element("li", "", text));
+  }
+  box.append(list);
+}
+
+function syncBattleActiveAfter() {
+  if (!battleDraft) {
+    return false;
+  }
+  let changed = false;
+  const ourType = $("battle-our-action-type").value;
+  const oppType = $("battle-opp-action-type").value;
+  if (ourType === "switch" && $("battle-our-switch").value !== "") {
+    const next = Number($("battle-our-switch").value);
+    if (battleDraft.active_our !== next) {
+      battleDraft.active_our = next;
+      changed = true;
+    }
+  }
+  if (oppType === "switch" && $("battle-opp-switch").value !== "") {
+    const next = Number($("battle-opp-switch").value);
+    if (battleDraft.active_opp !== next) {
+      battleDraft.active_opp = next;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function battleActionFromSelect(side, pre) {
+  const prefix = side === "our" ? "battle-our" : "battle-opp";
+  const type = $(`${prefix}-action-type`).value;
+  const slot = side === "our" ? pre.our : pre.opp;
+  if (type === "none") {
+    return null;
+  }
+  if (type === "charge") {
+    return { type: "charge", slot };
+  }
+  if (type === "switch") {
+    const raw = $(`${prefix}-switch`).value;
+    if (raw === "") {
+      throw new Error(`${battleSideText(side)}选择了切换，但没有选目标。`);
+    }
+    return { type: "switch", slot, to_slot: Number(raw) };
+  }
+  const skill = $(`${prefix}-skill`).value;
+  if (!skill) {
+    throw new Error(`${battleSideText(side)}选择了使用技能，但没有选技能。`);
+  }
+  return { type: "skill", slot, skill };
+}
+
+function battleIntendedSkill(side) {
+  const prefix = side === "our" ? "battle-our" : "battle-opp";
+  if ($(`${prefix}-action-type`).value !== "none") {
+    return null;
+  }
+  const value = $(`${prefix}-intended-skill`).value;
+  return value || null;
+}
+
+function requiredInt(value, label, min, max, allowBlank = false) {
+  if ((value === "" || value === null || value === undefined) && allowBlank) {
+    return null;
+  }
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || (max !== null && number > max)) {
+    throw new Error(`${label}必须是 ${min}${max !== null ? `～${max}` : " 以上"} 的整数。`);
+  }
+  return number;
+}
+
+function buildBattleEventsFromDraft(pre, whoFirst) {
+  const events = [];
+  const firstSide = whoFirst === "opp" ? "theirs" : "our";
+  const damageDrafts = [...battleDraftDamageEvents].sort((a, b) => {
+    const aFirst = a.sourceSide === firstSide ? 0 : 1;
+    const bFirst = b.sourceSide === firstSide ? 0 : 1;
+    return aFirst - bFirst;
+  });
+  for (const event of damageDrafts) {
+    if (event.totalDamage === "" || event.totalDamage === null) {
+      continue;
+    }
+    const total = requiredInt(event.totalDamage, "总伤害", 0, null);
+    const hits = requiredInt(event.hits, "连击数", 1, 99);
+    const ignore = Boolean(event.ignore);
+    const hpAfter = requiredInt(
+      event.hpAfter,
+      event.targetSide === "theirs" ? "对方行动后剩余百分比" : "我方行动后生命",
+      0,
+      event.targetSide === "theirs" ? 100 : null,
+      ignore
+    );
+    const after =
+      hpAfter === null
+        ? null
+        : event.targetSide === "theirs"
+          ? { side: "theirs", slot: event.targetSlot, hp_percent: hpAfter }
+          : { side: "our", slot: event.targetSlot, hp: hpAfter };
+    if (!after) {
+      throw new Error(`伤害事件“${event.skill}”必须填写打完后的生命。`);
+    }
+    events.push({
+      type: "damage",
+      source_side: event.sourceSide,
+      source_slot: event.sourceSlot,
+      target_side: event.targetSide,
+      target_slot: event.targetSlot,
+      skill: event.skill,
+      total_damage: total,
+      hits,
+      hp_after: after,
+      overkill: Boolean(event.overkill),
+      ignore_for_inference: ignore,
+      context: battleContextFromSnapshot(
+        pre.snapshot,
+        event.sourceSide,
+        event.sourceSlot,
+        event.targetSide,
+        event.targetSlot
+      ),
+    });
+  }
+  for (const event of battleDraftHpEvents) {
+    const hpAfter = requiredInt(
+      event.hpAfter,
+      event.targetSide === "theirs" ? "变化后对方剩余百分比" : "变化后我方生命",
+      0,
+      event.targetSide === "theirs" ? 100 : null
+    );
+    const amount = requiredInt(
+      event.amount,
+      "实际变化量",
+      -99999,
+      99999,
+      true
+    );
+    const after =
+      event.targetSide === "theirs"
+        ? { side: "theirs", slot: event.targetSlot, hp_percent: hpAfter }
+        : { side: "our", slot: event.targetSlot, hp: hpAfter };
+    const item = {
+      type: "hp_change",
+      target_side: event.targetSide,
+      target_slot: event.targetSlot,
+      reason: event.reason,
+      hp_after: after,
+    };
+    if (amount !== null) {
+      item.amount = amount;
+    }
+    events.push(item);
+  }
+  return events;
+}
+
+function buildBattleTurnFromForm() {
+  const pre = battlePreSlots();
+  if (!pre || !battleDraft) {
+    throw new Error("还没有对局初始状态。");
+  }
+  const ourAction = battleActionFromSelect("our", pre);
+  const oppAction = battleActionFromSelect("opp", pre);
+  if (!ourAction && !oppAction) {
+    throw new Error("双方行动不能同时为空。");
+  }
+  for (const side of ["our", "opp"]) {
+    const entries = battleSideEntries(battleDraft, side);
+    for (let slot = 0; slot < 6; slot += 1) {
+      if (!entries[slot]) {
+        continue;
+      }
+      const key = `${side}-${slot}`;
+      entries[slot].statuses = parseBattleStatusText(
+        battleStatusText[key] || "",
+        battlePetName(side, slot)
+      );
+    }
+  }
+  const snapshot = clone(battleDraft);
+  const whoFirst =
+    !ourAction ? "opp" : !oppAction ? "our" : $("battle-who-first").value;
+  const turn = {
+    turn: state.battle.turns.length + 1,
+    our_action: ourAction,
+    opp_action: oppAction,
+    who_first: whoFirst,
+    counter: $("battle-counter").checked,
+    events: buildBattleEventsFromDraft(pre, whoFirst),
+    replacements: clone(battleDraftReplacements),
+    snapshot_after: snapshot,
+  };
+  const ourIntended = battleIntendedSkill("our");
+  const oppIntended = battleIntendedSkill("opp");
+  if (ourIntended) {
+    turn.our_intended_skill = ourIntended;
+  }
+  if (oppIntended) {
+    turn.opp_intended_skill = oppIntended;
+  }
+  return turn;
+}
+
+async function requestBattleAnalysis() {
+  if (!state.battle.initial) {
+    throw new Error("还没有对局初始状态。");
+  }
+  const current = ++battleAnalysisId;
+  const response = await fetch("/api/battle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      version: 1,
+      initial: state.battle.initial,
+      turns: state.battle.turns,
+      result: state.battle.result,
+    }),
+  });
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    data = null;
+  }
+  if (current !== battleAnalysisId) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      data && data.error ? data.error : `服务返回了 ${response.status}`
+    );
+  }
+  if (!data) {
+    throw new Error("服务返回的内容不是有效数据。");
+  }
+  return data;
+}
+
+async function analyzeBattleAndRender() {
+  setBattleStatus("对局计算中…");
+  try {
+    const data = await requestBattleAnalysis();
+    if (!data) {
+      return null;
+    }
+    state.battle.inference = data;
+    state.battle.result = data.result;
+    resetBattleDraft(data.snapshot);
+    saveState();
+    updateSlotSummaries(data);
+    renderBattleCard();
+    setBattleStatus("");
+    return data;
+  } catch (error) {
+    setBattleStatus(`对局计算失败：${friendlyError(error)}`, true);
+    throw error;
+  }
+}
+
+async function addBattleTurn() {
+  const wasStarted = battleStarted();
+  try {
+    if (!state.battle.initial) {
+      state.battle.initial = initialFromTeamConfig();
+    }
+    const turn = buildBattleTurnFromForm();
+    state.battle.turns.push(turn);
+    saveState();
+    const data = await requestBattleAnalysis();
+    if (!data) {
+      return;
+    }
+    const last = state.battle.turns.length - 1;
+    if (data.turns && data.turns[last]) {
+      state.battle.turns[last].counter = data.turns[last].counter;
+      state.battle.turns[last].speed_inferable =
+        data.turns[last].speed_inferable;
+    }
+    state.battle.inference = data;
+    state.battle.result = data.result;
+    resetBattleDraft(data.snapshot);
+    saveState();
+    renderTeams();
+    updateSlotSummaries(data);
+    renderBattleCard();
+    setBattleStatus("");
+  } catch (error) {
+    state.battle.turns.pop();
+    if (!wasStarted && state.battle.turns.length === 0) {
+      state.battle.initial = null;
+      battleDraft = null;
+      battlePreBase = null;
+    }
+    saveState();
+    renderTeams();
+    renderBattleCard();
+    setBattleStatus(`添加回合失败：${friendlyError(error)}`, true);
+  }
+}
+
+async function deleteBattleFrom(index) {
+  if (!window.confirm(`确定删除第 ${index + 1} 回合及之后的所有回合吗？`)) {
+    return;
+  }
+  const backup = clone(state);
+  state.battle.turns = state.battle.turns.slice(0, index);
+  state.battle.result = null;
+  state.battle.inference = null;
+  battleDraft = null;
+  saveState();
+  if (state.battle.turns.length) {
+    try {
+      await analyzeBattleAndRender();
+      renderTeams();
+    } catch (error) {
+      state = backup;
+      saveState();
+      renderTeams();
+      renderBattleCard();
+    }
+  } else {
+    renderTeams();
+    renderBattleCard();
+    scheduleCalculate();
+  }
+}
+
+function clearBattle() {
+  if (!window.confirm("确定清空整场对局记录吗？队伍配置会保留，但旧记录无法恢复。")) {
+    return;
+  }
+  state.battle = freshBattle();
+  battleDraft = null;
+  battlePreBase = null;
+  battleStatusText = {};
+  saveState();
+  renderTeams();
+  renderBattleCard();
+  scheduleCalculate();
+}
+
+function downloadJson(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportBattle() {
+  if (!state.battle.initial) {
+    setBattleStatus("还没有对局可以导出。", true);
+    return;
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  downloadJson(`roco-battle-${stamp}.json`, {
+    format: "roco-battle",
+    version: 1,
+    raw: {
+      version: 1,
+      initial: state.battle.initial,
+      turns: state.battle.turns,
+      result: state.battle.result,
+    },
+    our_config: state.battle.initial.our_team,
+    opponent_inference:
+      state.battle.inference && state.battle.inference.opponent_team
+        ? state.battle.inference.opponent_team
+        : [],
+  });
+  setBattleStatus("对局文件已导出。");
+}
+
+function compareBattleInference(saved, computed) {
+  const notes = [];
+  if (!Array.isArray(saved) || !Array.isArray(computed)) {
+    return notes;
+  }
+  for (let slot = 0; slot < 6; slot += 1) {
+    const before = saved[slot];
+    const after = computed[slot];
+    if (!before || !after || !before.configured || !after.configured) {
+      continue;
+    }
+    if (
+      before.builds &&
+      after.builds &&
+      before.builds.remaining !== after.builds.remaining
+    ) {
+      notes.push(
+        `对方第 ${slot + 1} 只：文件里剩 ${before.builds.remaining} 种，重新计算剩 ${after.builds.remaining} 种`
+      );
+    }
+    if (before.natures_remaining !== after.natures_remaining) {
+      notes.push(
+        `对方第 ${slot + 1} 只：文件里 ${before.natures_remaining} 种性格，重新计算 ${after.natures_remaining} 种`
+      );
+    }
+  }
+  return notes;
+}
+
+async function importBattle(file) {
+  const backup = clone(state);
+  try {
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    const raw = payload.raw && typeof payload.raw === "object" ? payload.raw : payload;
+    if (!raw || typeof raw !== "object" || !raw.initial) {
+      throw new Error("这个文件里没有对局初始状态。");
+    }
+    if (raw.version !== undefined && raw.version !== 1) {
+      throw new Error(`暂不支持对局文件版本 ${raw.version}。`);
+    }
+    const team = teamFromBattleInitial(raw.initial);
+    state.ourTeam = team.ourTeam;
+    state.oppTeam = team.oppTeam;
+    state.activeOur = team.activeOur;
+    state.activeOpp = team.activeOpp;
+    state.battle = {
+      initial: raw.initial,
+      turns: Array.isArray(raw.turns) ? raw.turns : [],
+      result: raw.result || null,
+      inference: null,
+    };
+    battleDraft = null;
+    battlePreBase = null;
+    battleStatusText = {};
+    saveState();
+    renderTeams();
+    renderBattleCard();
+    const data = await requestBattleAnalysis();
+    if (!data) {
+      return;
+    }
+    state.battle.inference = data;
+    state.battle.result = data.result;
+    resetBattleDraft(data.snapshot);
+    saveState();
+    updateSlotSummaries(data);
+    renderBattleCard();
+    scheduleCalculate();
+    const notes = compareBattleInference(
+      payload.opponent_inference,
+      data.opponent_team
+    );
+    if (notes.length) {
+      setBattleStatus(
+        `导入完成，但保存的推断结果和重新计算不一致：${notes.join("；")}`,
+        true
+      );
+    } else {
+      setBattleStatus("对局文件已导入，并重新计算完成。");
+    }
+  } catch (error) {
+    state = backup;
+    saveState();
+    renderTeams();
+    renderBattleCard();
+    scheduleCalculate();
+    setBattleStatus(`导入失败：${friendlyError(error)}`, true);
+  }
+}
+
+function initBattleForm() {
+  const onChange = () => {
+    renderBattleActionSelectors(battlePreSlots());
+    const activeChanged = syncBattleActiveAfter();
+    syncBattleDamageEvents();
+    renderBattleDamageEvents();
+    if (activeChanged) {
+      renderBattleSnapshotEditor();
+    }
+  };
+  $("battle-our-action-type").addEventListener("change", onChange);
+  $("battle-opp-action-type").addEventListener("change", onChange);
+  $("battle-our-skill").addEventListener("change", onChange);
+  $("battle-opp-skill").addEventListener("change", onChange);
+  $("battle-our-switch").addEventListener("change", onChange);
+  $("battle-opp-switch").addEventListener("change", onChange);
+  $("battle-show-all-opp-skills").addEventListener("change", () => {
+    renderBattleActionSelectors(battlePreSlots());
+    syncBattleDamageEvents();
+    renderBattleDamageEvents();
+  });
+  $("battle-add-hp-event").addEventListener("click", () => {
+    const oppSlots = configuredSlots("opp");
+    battleDraftHpEvents.push({
+      targetSide: oppSlots.length ? "theirs" : "our",
+      targetSlot: oppSlots.length
+        ? oppSlots[0]
+        : configuredSlots("our")[0] ?? 0,
+      reason: "other",
+      amount: "",
+      hpAfter: "",
+    });
+    renderBattleHpEvents();
+  });
+  $("battle-add-turn").addEventListener("click", () => {
+    addBattleTurn();
+  });
+  $("battle-export").addEventListener("click", exportBattle);
+  $("battle-import-button").addEventListener("click", () => {
+    $("battle-import-file").click();
+  });
+  $("battle-import-file").addEventListener("change", async () => {
+    const file = $("battle-import-file").files[0];
+    $("battle-import-file").value = "";
+    if (file) {
+      await importBattle(file);
+    }
+  });
+  $("battle-clear").addEventListener("click", clearBattle);
+  renderBattleCard();
+}
+
 function renderWarnings(warnings) {
-  const box = $("warnings");
+  const box = $("calc-warnings") || $("warnings");
+  if (!box) {
+    return;
+  }
   box.replaceChildren();
   if (!warnings || !warnings.length) {
     box.hidden = true;
@@ -1865,11 +3830,16 @@ function renderWarnings(warnings) {
 }
 
 function renderResponse(data) {
-  updateSlotSummaries(data);
+  latestTeamResult = data;
+  const summaryData =
+    battleStarted() && state.battle.inference
+      ? state.battle.inference
+      : data;
+  updateSlotSummaries(summaryData);
   updateHpHints(data);
   renderActive(data.active, data);
-  updateRecordResults(data.records || []);
   renderWarnings(data.warnings || []);
+  renderBattleCard();
 }
 
 function validateState() {
@@ -2070,6 +4040,9 @@ async function init() {
     }
     meta = await response.json();
     skillByName = new Map(meta.skills.map((skill) => [skill.name, skill]));
+    actionSkillByName = new Map(
+      (meta.action_skills || []).map((skill) => [skill.name, skill])
+    );
     petOptions = meta.pets
       .map((pet, index) => ({ index, label: petLabel(pet) }))
       .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
@@ -2083,12 +4056,17 @@ async function init() {
 
     renderTeams();
     refreshActiveStyles();
-    initRecordForm();
-    renderRecords();
+    initBattleForm();
     saveState();
     setStatus("");
-    calculate();
+    await calculate();
+    if (battleStarted() && state.battle.turns.length) {
+      analyzeBattleAndRender();
+    } else {
+      renderBattleCard();
+    }
   } catch (error) {
+    console.error(error);
     setStatus(`页面载入失败：${friendlyError(error)}`, true);
   }
 }

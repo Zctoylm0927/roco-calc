@@ -1314,6 +1314,7 @@ def analyze_battle_log(payload):
         "opponent_team": opponent_team,
         "active": active,
         "turns": results,
+        "initial_snapshot": initial["snapshot"],
         "snapshot": snapshot,
         "magic_points": snapshot["magic_points"],
         "result": result,
